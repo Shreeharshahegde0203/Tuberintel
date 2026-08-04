@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: sqlite:////data/tuberintel.db
+      UPLOAD_DIR: /data/uploads
+      ANNOTATED_DIR: /data/annotated
+      FRONTEND_ORIGIN: http://localhost:8080
+      MODEL_MODE: ${MODEL_MODE:-cv_demo}
+      DATA_GOV_API_KEY: ${DATA_GOV_API_KEY:-}
+    volumes:
+      - tuberintel_data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  tuberintel_data:

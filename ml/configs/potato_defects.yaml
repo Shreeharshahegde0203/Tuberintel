@@ -1,0 +1,14 @@
+# Replace `path` with your annotated Ultralytics segmentation dataset root.
+path: datasets/potato-defects
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: bruise
+  1: common_scab
+  2: black_scurf
+  3: crack
+  4: greening
+  5: sprout
+  6: rot
+  7: cut

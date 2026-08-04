@@ -1,0 +1,94 @@
+import {
+  BarChart3,
+  Boxes,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Gauge,
+  Languages,
+  Landmark,
+  Leaf,
+  LogOut,
+  Menu,
+  PlusCircle,
+  ScanLine,
+  X,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
+import { useI18n } from '../i18n/I18nContext'
+
+export function AppShell() {
+  const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const location = useLocation()
+  const { language, setLanguage, t } = useI18n()
+  const { user, signOut } = useAuth()
+
+  const navItems = [
+    { to: '/', label: t('nav.operations'), icon: Gauge },
+    { to: '/analyze', label: t('nav.inspect'), icon: ScanLine },
+    { to: '/market', label: t('nav.market'), icon: Landmark },
+    { to: '/history', label: t('nav.history'), icon: ClipboardList },
+    { to: '/models', label: t('nav.models'), icon: Boxes },
+  ]
+
+  useEffect(() => setMobileOpen(false), [location.pathname])
+
+  return (
+    <div className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''}`}>
+      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+        <div className="brand-block">
+          <div className="brand-mark" aria-hidden="true"><Leaf size={23} strokeWidth={2.2} /></div>
+          {!collapsed && <div><strong>{t('brand.name')}</strong><span>{t('brand.tagline')}</span></div>}
+          <button className="icon-button mobile-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={22} /></button>
+        </div>
+
+        <div className="sidebar-section-label">{t('nav.workspace')}</div>
+        <nav className="sidebar-nav" aria-label={t('nav.workspace')}>
+          {navItems.map(({ to, label, icon: Icon }) => (
+            <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => (isActive ? 'active' : '')} title={collapsed ? label : undefined}>
+              <Icon size={21} />{!collapsed && <span>{label}</span>}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="sidebar-spacer" />
+        {!collapsed && (
+          <div className="sidebar-note">
+            <div className="sidebar-note-icon"><BarChart3 size={20} /></div>
+            <div><strong>{t('sidebar.scope')}</strong><p>{t('sidebar.scopeText')}</p></div>
+          </div>
+        )}
+        <button className="collapse-button" onClick={() => setCollapsed((value) => !value)}>
+          {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+          {!collapsed && <span>{t('nav.collapse')}</span>}
+        </button>
+      </aside>
+
+      <div className="app-main">
+        <header className="topbar">
+          <button className="icon-button menu-button" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu size={23} /></button>
+          <div className="topbar-context"><span className="eyebrow">{t('top.system')}</span><strong>{t('top.title')}</strong></div>
+          <div className="topbar-actions">
+            <div className="data-status"><span /> {t('top.marketReady')}</div>
+            <div className="language-switch" role="group" aria-label="Language">
+              <Languages size={18} aria-hidden="true" />
+              <button className={language === 'en' ? 'active' : ''} type="button" onClick={() => setLanguage('en')} aria-pressed={language === 'en'}>English</button>
+              <button className={language === 'kn' ? 'active' : ''} type="button" onClick={() => setLanguage('kn')} aria-pressed={language === 'kn'}>ಕನ್ನಡ</button>
+            </div>
+            <NavLink to="/analyze" className="button button-primary button-compact"><PlusCircle size={19} /> {t('top.newInspection')}</NavLink>
+            <div className="auth-user-chip" title={user?.email || ''}>
+              <span>{user?.name || user?.email?.split('@')[0] || 'Account'}</span>
+              <button type="button" className="icon-button" onClick={() => void signOut()} aria-label="Sign out">
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="page-content"><Outlet /></main>
+      </div>
+    </div>
+  )
+}

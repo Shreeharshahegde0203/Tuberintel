@@ -1,0 +1,46 @@
+version: 1
+modules:
+  tuber_surface:
+    labels:
+      - healthy
+      - bruise_blackspot
+      - crack_cut
+      - common_scab
+      - black_scurf
+      - blackleg
+      - dry_rot
+      - soft_rot
+      - brown_rot
+      - pink_rot
+      - greening
+      - sprout
+      - deformity
+      - miscellaneous
+    safety_critical:
+      - soft_rot
+      - brown_rot
+      - pink_rot
+      - greening
+  internal_defect:
+    labels:
+      - normal_internal
+      - hollow_heart
+      - blackheart
+      - vascular_discoloration
+    notes: Requires cut/open or non-RGB sensing; do not infer confidently from intact surface-only images.
+  leaf_health:
+    separate_model: true
+    labels:
+      - healthy_leaf
+      - early_blight
+      - late_blight
+      - bacterial
+      - viral
+      - pest
+      - nematode
+  grade_profiles:
+    - local_buyer_custom
+    - unece_ffv_52
+    - usda_fresh
+    - usda_processing
+    - usda_seed

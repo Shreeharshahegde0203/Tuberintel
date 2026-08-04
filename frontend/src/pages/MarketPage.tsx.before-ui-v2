@@ -1,0 +1,42 @@
+import { Database, RefreshCw, TrendingDown, TrendingUp } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ErrorState, LoadingState, PageHeader, StatCard } from '../components/Common'
+import { useI18n } from '../i18n/I18nContext'
+import { getMarketOverview, refreshMarket } from '../services/api'
+import { formatCurrency, formatDate } from '../services/format'
+import type { MarketOverview } from '../types'
+
+export default function MarketPage() {
+  const [data, setData] = useState<MarketOverview | null>(null)
+  const [error, setError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [message, setMessage] = useState('')
+  const { language, locale, t } = useI18n()
+  const load = () => { setError(''); getMarketOverview().then(setData).catch((err) => setError(err?.response?.data?.detail || err.message)) }
+  useEffect(load, [])
+  const refresh = async () => { setRefreshing(true); setMessage(''); try { const result = await refreshMarket(); setMessage(result.note); await load() } catch (err: any) { setMessage(err?.response?.data?.detail || err.message) } finally { setRefreshing(false) } }
+
+  if (error) return <ErrorState message={String(error)} retry={load} />
+  if (!data) return <LoadingState />
+  const latestAverage = data.latest_prices.length ? data.latest_prices.reduce((sum, p) => sum + p.modal_price, 0) / data.latest_prices.length : 0
+  const highest = data.latest_prices[0]
+  const forecast = data.forecast.map((point) => ({ ...point, label: new Date(point.date).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) }))
+  const direction = language === 'kn' ? ({ rising: 'ಏರುತ್ತಿದೆ', falling: 'ಇಳಿಯುತ್ತಿದೆ', stable: 'ಸ್ಥಿರವಾಗಿದೆ' }[data.price_direction]) : data.price_direction
+
+  return <>
+    <PageHeader eyebrow={t('market.eyebrow')} title={t('market.title')} description={t('market.description')} actions={<button className="button button-secondary" onClick={refresh} disabled={refreshing}><RefreshCw className={refreshing ? 'spin' : ''} size={19} /> {refreshing ? t('market.refreshing') : t('market.refresh')}</button>} />
+    {message && <div className="source-message">{message}</div>}
+    <section className="stat-grid market-stat-grid">
+      <StatCard icon={data.price_direction === 'falling' ? TrendingDown : TrendingUp} label={t('market.direction')} value={`${data.change_percent >= 0 ? '+' : ''}${data.change_percent.toFixed(1)}%`} detail={direction} tone={data.change_percent >= 0 ? 'positive' : 'warning'} />
+      <StatCard icon={Database} label={t('market.modal')} value={`${formatCurrency(latestAverage, 0, language)} / qtl`} detail={`${t('market.freshness')}: ${data.freshness}`} />
+      <StatCard icon={TrendingUp} label={t('market.best')} value={highest ? `${formatCurrency(highest.modal_price, 0, language)} / qtl` : '—'} detail={data.best_market} tone="positive" />
+    </section>
+    <section className="panel chart-panel market-chart">
+      <div className="panel-heading"><div><span className="panel-kicker">{t('market.signal')}</span><h2>{language === 'kn' ? '30 ದಿನಗಳ ನಿರೀಕ್ಷಿತ ಮಾದರಿ ಬೆಲೆ' : '30-day expected modal price'}</h2></div><span className="source-pill">{data.source_note}</span></div>
+      <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={forecast} margin={{ left: -10, right: 10 }}><defs><linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--green-600)" stopOpacity={0.26} /><stop offset="95%" stopColor="var(--green-600)" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" axisLine={false} tickLine={false} minTickGap={24} /><YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Math.round(v / 100) * 100}`} domain={['auto', 'auto']} /><Tooltip formatter={(value, name) => [formatCurrency(Number(value), 0, language), String(name).replaceAll('_', ' ')]} /><Area type="monotone" dataKey="upper_bound" stroke="transparent" fill="transparent" /><Area type="monotone" dataKey="lower_bound" stroke="transparent" fill="transparent" /><Area type="monotone" dataKey="predicted_price" stroke="var(--green-700)" strokeWidth={2.5} fill="url(#priceArea)" /></AreaChart></ResponsiveContainer></div>
+      <p className="chart-footnote">{language === 'kn' ? 'ಇದು ಪಾರದರ್ಶಕ ಮೂಲ ಸೂಚನೆ. ಸಾಕಷ್ಟು ಪರಿಶೀಲಿತ ಕಾಲಕ್ರಮದ ಡೇಟಾ ದೊರೆತ ನಂತರ LightGBM/XGBoost ಅನ್ನು ರೋಲಿಂಗ್ ಬೆಂಚ್‌ಮಾರ್ಕ್‌ನಲ್ಲಿ ಆಯ್ಕೆ ಮಾಡಲಾಗುತ್ತದೆ.' : 'This is a transparent baseline signal. LightGBM/XGBoost will be selected only after rolling validation on a sufficiently long, verified market history.'}</p>
+    </section>
+    <section className="panel table-panel"><div className="panel-heading"><div><span className="panel-kicker">{t('market.records')}</span><h2>{language === 'kn' ? 'ಮಾರುಕಟ್ಟೆವಾರು ಆಲೂಗಡ್ಡೆ ಬೆಲೆ' : 'Market-wise potato prices'}</h2></div></div><div className="table-scroll"><table><thead><tr><th>{t('market.market')}</th><th>{t('analysis.district')}</th><th>{t('market.variety')}</th><th>{t('market.arrival')}</th><th>{t('market.min')}</th><th>{t('market.modal')}</th><th>{t('market.max')}</th></tr></thead><tbody>{data.latest_prices.map((price) => <tr key={`${price.market}-${price.arrival_date}`}><td><strong>{price.market}</strong><span className="cell-subtitle">{price.source}</span></td><td>{price.district}</td><td>{price.variety} · {price.grade}</td><td>{formatDate(price.arrival_date, language)}</td><td>{formatCurrency(price.min_price, 0, language)}</td><td><strong>{formatCurrency(price.modal_price, 0, language)}</strong></td><td>{formatCurrency(price.max_price, 0, language)}</td></tr>)}</tbody></table></div></section>
+  </>
+}

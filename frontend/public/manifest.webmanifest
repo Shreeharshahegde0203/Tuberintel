@@ -1,0 +1,11 @@
+{
+  "name": "TuberIntel — Potato Value Intelligence",
+  "short_name": "TuberIntel",
+  "description": "Bilingual post-harvest potato quality and market decision support",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f5f1",
+  "theme_color": "#123825",
+  "lang": "en-IN",
+  "icons": []
+}

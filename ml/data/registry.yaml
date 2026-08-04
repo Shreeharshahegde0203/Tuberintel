@@ -1,0 +1,67 @@
+version: 1
+reviewed_on: 2026-07-17
+sources:
+  - id: potato_disease_mit_451
+    title: Dataset for Potato Disease Classification
+    task: tuber_classification
+    source_url: https://github.com/Mukaffi28/Potato-Disease
+    download_method: git
+    license: MIT
+    original_images_reported: 451
+    include: true
+    notes: Audit duplicates and overlap with PotatoGANs/compiled datasets.
+  - id: potato_care
+    title: PotatoCare
+    task: tuber_classification
+    source_url: https://data.mendeley.com/datasets/7vm7xskfg4
+    download_method: manual_mendeley
+    license: CC-BY-4.0
+    original_images_reported: 10117
+    include: true
+    notes: Published class totals are inconsistent; verify extracted files and provenance before use.
+  - id: potato_recognition_495
+    title: Potato Disease Recognition Dataset
+    task: tuber_classification
+    source_url: https://data.mendeley.com/datasets/pmbc875pr7/1
+    download_method: manual_mendeley
+    license: CC-BY-4.0
+    original_images_reported: 495
+    augmented_images_reported: 3465
+    include: true
+    notes: Parent-aware split required; generated augmentations are training-only.
+  - id: potato_viral_foliar_tuber
+    title: Potato Viral Disease Dataset on both Foliar and Tuber
+    task: mixed_leaf_tuber_classification
+    source_url: https://data.mendeley.com/datasets/rgfhzd5mzw
+    download_method: manual_mendeley
+    license: CC-BY-4.0
+    original_images_reported: 1972
+    include: true
+    notes: Route leaf and tuber samples to separate model families.
+  - id: potato_leaf_uncontrolled
+    title: Potato Leaf Disease Dataset in Uncontrolled Environment
+    task: leaf_classification
+    source_url: https://data.mendeley.com/datasets/ptz377bwb8
+    download_method: manual_mendeley
+    license: CC-BY-4.0
+    original_images_reported: 3076
+    include: false
+    notes: Optional field crop-health module; not part of post-harvest tuber grade.
+  - id: potato_gans
+    title: PotatoGANs code and comprehensive dataset link
+    task: tuber_classification_segmentation
+    source_url: https://github.com/Mukaffi28/ExplainableAI-PotatoGAN-Cutting-Edge-Disease-Identification-for-Potatoes
+    download_method: git
+    license: verify_dataset_assets
+    include: review
+    notes: Public code; verify each linked image asset's licence before redistribution.
+  - id: hollow_heart
+    title: PotatoHHData
+    task: internal_defect_classification
+    source_url: https://huggingface.co/datasets/CollinsW/PotatoHHData
+    repo_id: CollinsW/PotatoHHData
+    download_method: huggingface
+    license: Apache-2.0
+    original_images_reported: 2024
+    include: true
+    notes: Cut/open-tuber hollow-heart task; keep separate from intact surface grading.

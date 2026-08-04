@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.db
+backend/storage/
+
+# Node
+node_modules/
+dist/
+
+# Environment and model artefacts
+.env
+.env.local
+*.pt
+*.pth
+*.onnx
+*.joblib
+*.zip
+ml/runs/
+ml/artifacts/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
