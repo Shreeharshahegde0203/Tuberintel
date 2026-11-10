@@ -38,3 +38,9 @@ The application uses explicit calculations rather than an LLM. Hard commercial c
 - Grad-CAM is generated from the full classifier checkpoint.
 - Segmentation masks provide direct defect-area explanations.
 - Deterministic decision factors give exact contributions; SHAP is reserved for a learned estimator.
+
+## Price forecasting V2 (implemented)
+
+The original LightGBM proof-of-concept has been replaced by a leakage-safe champion/challenger pipeline. See `PRICE_FORECAST_ENGINE_V2.md` and `PRICE_FORECAST_DUMMY_TEST_REPORT.md`.
+
+Production numeric forecasts are capped at 30 days. D+31 to D+90 is directional outlook only. Direct multi-horizon LightGBM/XGBoost candidates are benchmarked against persistence and seasonal-naive baselines using expanding-window validation; learned models are not promoted unless they beat persistence. Out-of-fold residuals calibrate the displayed price interval. The API retains an auditable robust seasonal/trend fallback when no validated artifact is available.

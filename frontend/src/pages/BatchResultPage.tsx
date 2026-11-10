@@ -7,7 +7,6 @@ import {
   IndianRupee,
   MapPin,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
@@ -66,16 +65,60 @@ export default function BatchResultPage() {
 
   const assessment = batch.assessment
   const rec = batch.recommendation
+  const summary = assessment.feature_summary || {}
+
+  const conditionDistribution =
+    summary.condition_distribution || {}
+
+  const visionDefects =
+    summary.defect_area_percent || {}
+
+  const visionActive =
+    Number(summary.vision_v1_images || 0) > 0
+
+  const manualReviewRequired =
+    Boolean(summary.manual_review_required)
+
+  const reviewReasons =
+    Array.isArray(summary.review_reasons)
+      ? summary.review_reasons.map(String)
+      : []
+
+  const independentImages =
+    Number(
+      summary.independent_images
+      || summary.images_analyzed
+      || batch.images.length
+    )
+
+  const duplicatesIgnored =
+    Number(summary.duplicate_images_ignored || 0)
+
+  const topCondition =
+    typeof summary.top_condition === 'string'
+      ? summary.top_condition
+      : null
+
+  const conditionRows = [
+    ['Healthy', Number(conditionDistribution.Healthy || 0)],
+    ['Damaged', Number(conditionDistribution.Damaged || 0)],
+    ['Defected', Number(conditionDistribution.Defected || 0)],
+    ['Diseased-Fungal', Number(conditionDistribution['Diseased-Fungal'] || 0)],
+    ['Sprouted', Number(conditionDistribution.Sprouted || 0)],
+  ] as const
+
+  const visionDefectRows = [
+    ['Scab', Number(visionDefects.scab || 0)],
+    ['Rot', Number(visionDefects.rot || 0)],
+    ['Greening', Number(visionDefects.greening || 0)],
+    ['Mechanical damage', Number(visionDefects.mechanical_damage || 0)],
+  ] as const
+
+  const totalVisibleDefect =
+    Number(visionDefects.total_visible_defect || 0)
+
   const topImage = batch.images.find((img) => img.annotated_url) || batch.images[0]
   const imageSrc = topImage?.annotated_url ? `${mediaBase}${topImage.annotated_url}` : topImage?.image_url ? `${mediaBase}${topImage.image_url}` : null
-  const imagesAnalyzed =
-    typeof assessment.feature_summary.images_analyzed === 'number'
-      ? assessment.feature_summary.images_analyzed
-      : batch.images.length
-  const potatoesDetected =
-    typeof assessment.feature_summary.potatoes_detected === 'number'
-      ? assessment.feature_summary.potatoes_detected
-      : '—'
 
   const defects = [
     [t('defect.bruising'), assessment.bruise_severity],
@@ -103,6 +146,12 @@ export default function BatchResultPage() {
     }
   }
 
+  const qualityValuation = assessment.feature_summary.quality_valuation as {
+    reference_price_per_quintal: number; effective_value_per_original_kg: number;
+    applied_factor: number; accepted_weight_factor: number; status: string;
+    sampling_basis: string; calibration_status: string;
+  } | undefined
+
   const downloadJson = () => {
     const blob = new Blob([JSON.stringify(batch, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -124,7 +173,7 @@ export default function BatchResultPage() {
 
       <section className={`recommendation-hero action-${actionTone[rec.recommended_action] || 'sell'}`}>
         <div className="recommendation-main">
-          <span className="recommendation-label"><Sparkles size={16} /> {t('result.recommended')}</span>
+          <span className="recommendation-label"><CheckCircle2 size={16} /> {t('result.recommended')}</span>
           <h2>{actionLabel(rec.recommended_action, language)}</h2>
           <p>{rec.explanation[0]}</p>
           <div className="recommendation-meta">
@@ -140,11 +189,38 @@ export default function BatchResultPage() {
         </div>
       </section>
 
+      {/* TUBERINTEL QUALITY VALUE V1 */}
+      {qualityValuation && <section className="panel form-section">
+        <div className="panel-heading"><div><span className="panel-kicker">{qualityValuation.status}</span><h2>{language === 'kn' ? 'ಗುಣಮಟ್ಟ ಆಧಾರಿತ ಬ್ಯಾಚ್ ಮೌಲ್ಯ' : 'Quality-adjusted batch value'}</h2></div></div>
+        <div className="form-grid two-col">
+          <p>{language === 'kn' ? 'ಉಲ್ಲೇಖ / quote ದರ' : 'Reference / quoted price'}: <strong>{formatCurrency(qualityValuation.reference_price_per_quintal / 100, 2, language)}/kg</strong></p>
+          <p>{language === 'kn' ? 'ಮೂಲ ಬ್ಯಾಚ್ kg ಗೆ ಅಂದಾಜು ಮೌಲ್ಯ' : 'Projected value per original batch kg'}: <strong>{formatCurrency(qualityValuation.effective_value_per_original_kg, 2, language)}/kg</strong></p>
+          <p>Applied value factor: <strong>{(qualityValuation.applied_factor * 100).toFixed(1)}%</strong></p>
+          <p>Retained weight assumption: <strong>{(qualityValuation.accepted_weight_factor * 100).toFixed(1)}%</strong></p>
+        </div>
+        <p className="fine-print">{qualityValuation.calibration_status === 'uncalibrated_scenario' ? 'Prototype scenario, not a verified buyer price. ' : ''}{qualityValuation.sampling_basis}. Value per original kg includes any entered sorting loss; it is not the price per accepted kg. Storage loss and explicit costs are accounted for separately.</p>
+      </section>}
+
       <section className="result-grid">
         <article className="panel result-image-panel span-7">
           <div className="panel-heading"><div><span className="panel-kicker">{t('result.cvInspection')}</span><h2>{t('result.surfaceAssessment')}</h2></div><StatusBadge value={`Grade ${assessment.quality_grade}`} /></div>
           {imageSrc ? <img className="result-image" src={imageSrc} alt={language === 'kn' ? 'ಗುರುತಿಸಲಾದ ಆಲೂಗಡ್ಡೆ ಪರಿಶೀಲನೆ' : 'Annotated potato inspection'} /> : <div className="image-missing">{t('result.noImage')}</div>}
-          <div className="image-legend"><span className="legend-red" /> {t('result.legendBruise')} <span className="legend-green" /> {t('result.legendScab')} <span className="legend-blue" /> {t('result.legendCrack')} <span className="legend-amber" /> {t('result.legendGreen')}</div>
+          {visionActive ? (
+            <div className="image-legend">
+              <span className="legend-roi" /> Potato ROI
+              <span className="legend-scab-v1" /> Scab
+              <span className="legend-rot-v1" /> Rot
+              <span className="legend-green-v1" /> Greening
+              <span className="legend-mechanical-v1" /> Mechanical damage
+            </div>
+          ) : (
+            <div className="image-legend">
+              <span className="legend-red" /> {t('result.legendBruise')}
+              <span className="legend-green" /> {t('result.legendScab')}
+              <span className="legend-blue" /> {t('result.legendCrack')}
+              <span className="legend-amber" /> {t('result.legendGreen')}
+            </div>
+          )}
           <p className="explainability-caption">{String(assessment.feature_summary.explainability_mode || 'Transparent feature overlays')}</p>
         </article>
 
@@ -162,6 +238,206 @@ export default function BatchResultPage() {
             <div><span>{t('result.storageSensitivity')}</span><strong>{Math.min(100, (assessment.sprout_severity + assessment.bruise_severity + assessment.discoloration_severity) / 3).toFixed(1)}</strong></div>
           </div>
         </article>
+      </section>
+
+      {manualReviewRequired && (
+        <section className="vision-review-banner">
+          <AlertTriangle size={22} />
+          <div>
+            <strong>Manual review recommended</strong>
+
+            {reviewReasons.length > 0 ? (
+              <ul>
+                {reviewReasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>
+                Review model confidence and cross-image evidence
+                before acting.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className="panel vision-evidence-panel">
+        <div className="panel-heading vision-evidence-heading">
+          <div>
+            <span className="panel-kicker">
+              TuberIntel Vision v1
+            </span>
+            <h2>Learned vision evidence</h2>
+          </div>
+
+          <StatusBadge
+            value={
+              visionActive
+                ? 'Vision v1 active'
+                : 'CV fallback'
+            }
+          />
+        </div>
+
+        {visionActive ? (
+          <>
+            <div className="vision-stage-grid">
+
+              <article className="vision-stage-card">
+                <div className="vision-stage-top">
+                  <span>A</span>
+                  <small>YOLO11n-Seg</small>
+                </div>
+
+                <h3>Potato ROI segmentation</h3>
+
+                <strong className="vision-stage-value">
+                  {summary.potatoes_detected ?? '?'}
+                </strong>
+
+                <p>
+                  Detected potato regions across independent
+                  uploaded views.
+                </p>
+              </article>
+
+              <article className="vision-stage-card">
+                <div className="vision-stage-top">
+                  <span>B</span>
+                  <small>YOLO11s-Cls</small>
+                </div>
+
+                <h3>Condition classification</h3>
+
+                {topCondition && (
+                  <div className="vision-top-condition">
+                    <span>Dominant condition</span>
+                    <strong>{topCondition}</strong>
+                  </div>
+                )}
+
+                <div className="vision-breakdown-list">
+                  {conditionRows.map(([label, probability]) => (
+                    <div
+                      className="vision-breakdown-row"
+                      key={label}
+                    >
+                      <div>
+                        <span>{label}</span>
+                        <strong>
+                          {(probability * 100).toFixed(1)}%
+                        </strong>
+                      </div>
+
+                      <div className="vision-mini-track">
+                        <span
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              probability * 100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="vision-stage-card">
+                <div className="vision-stage-top">
+                  <span>C</span>
+                  <small>YOLO11s-Seg</small>
+                </div>
+
+                <h3>Visible defect segmentation</h3>
+
+                <div className="vision-total-defect">
+                  <span>Visible defect surface</span>
+                  <strong>
+                    {totalVisibleDefect.toFixed(2)}%
+                  </strong>
+                </div>
+
+                <div className="vision-breakdown-list">
+                  {visionDefectRows.map(([label, value]) => (
+                    <div
+                      className="vision-breakdown-row"
+                      key={label}
+                    >
+                      <div>
+                        <span>{label}</span>
+                        <strong>
+                          {value.toFixed(2)}%
+                        </strong>
+                      </div>
+
+                      <div className="vision-mini-track">
+                        <span
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              value * 5,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <small className="vision-surface-note">
+                  Visible surface evidence only. Internal defects
+                  are not inferred.
+                </small>
+              </article>
+
+            </div>
+
+            <div className="vision-trace-strip">
+              <span>
+                <strong>
+                  {summary.images_analyzed ?? batch.images.length}
+                </strong>
+                uploaded images
+              </span>
+
+              <span>
+                <strong>{independentImages}</strong>
+                independent views
+              </span>
+
+              <span>
+                <strong>{duplicatesIgnored}</strong>
+                duplicates ignored
+              </span>
+
+              <span>
+                <strong>
+                  {assessment.confidence.toFixed(1)}%
+                </strong>
+                fusion confidence
+              </span>
+            </div>
+          </>
+        ) : (
+          <div className="vision-fallback-state">
+            <ShieldCheck size={24} />
+
+            <div>
+              <strong>
+                Deterministic CV fallback used
+              </strong>
+
+              <p>
+                Validated Model A, B and C weights were not active
+                for this analysis. Once installed, this section will
+                automatically display the learned evidence.
+              </p>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="result-grid">
@@ -247,7 +523,7 @@ export default function BatchResultPage() {
         </div>
       </section>
 
-      <footer className="result-footer">{t('result.analysisGenerated')} {formatDate(batch.updated_at, language)} · {imagesAnalyzed} {t('result.images')} · {potatoesDetected} {t('result.potatoRegions')}</footer>
+      <footer className="result-footer">{t('result.analysisGenerated')} {formatDate(batch.updated_at, language)} · {assessment.feature_summary.images_analyzed || batch.images.length} {t('result.images')} · {assessment.feature_summary.potatoes_detected || '—'} {t('result.potatoRegions')}</footer>
     </>
   )
 }

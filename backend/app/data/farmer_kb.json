@@ -1,0 +1,72 @@
+[
+  {
+    "id": "quality-grading",
+    "title": "TuberIntel quality grading",
+    "keywords": ["grade", "grading", "quality", "A", "B", "C", "D", "defect", "bruise", "crack", "scab", "green", "sprout"],
+    "answer_en": "TuberIntel combines visible surface-defect signals, shape/size uniformity, image-quality checks and model confidence into a batch quality score. Grade A is the strongest fresh-market candidate, B is normal fresh-market quality, C is better suited to processing or a secondary market, and D needs clearance/reject review. The grade is decision support, not an official buyer certificate.",
+    "answer_kn": "TuberIntel ದೃಶ್ಯ ಮೇಲ್ಮೈ ದೋಷಗಳು, ಆಕಾರ/ಗಾತ್ರ ಸಮಾನತೆ, ಚಿತ್ರದ ಗುಣಮಟ್ಟ ಮತ್ತು ಮಾದರಿಯ ವಿಶ್ವಾಸವನ್ನು ಸೇರಿಸಿ ಬ್ಯಾಚ್ ಗುಣಮಟ್ಟ ಅಂಕ ನೀಡುತ್ತದೆ. A ಗ್ರೇಡ್ ಉತ್ತಮ ತಾಜಾ ಮಾರುಕಟ್ಟೆಗೆ, B ಸಾಮಾನ್ಯ ತಾಜಾ ಮಾರುಕಟ್ಟೆಗೆ, C ಸಂಸ್ಕರಣೆ/ದ್ವಿತೀಯ ಮಾರುಕಟ್ಟೆಗೆ, D ಕ್ಲಿಯರೆನ್ಸ್ ಅಥವಾ ತಿರಸ್ಕಾರ ಪರಿಶೀಲನೆಗೆ ಸೂಕ್ತ. ಇದು ನಿರ್ಧಾರ ಸಹಾಯ ಮಾತ್ರ; ಅಧಿಕೃತ ಖರೀದಿದಾರ ಪ್ರಮಾಣಪತ್ರವಲ್ಲ."
+  },
+  {
+    "id": "size-measurement",
+    "title": "Potato size measurement",
+    "keywords": ["size", "length", "width", "diameter", "mm", "ruler", "potato ruler", "calibration"],
+    "answer_en": "Absolute size in millimetres cannot be recovered reliably from an ordinary photo unless the image contains a known scale or another calibrated measurement is supplied. TuberIntel therefore treats image-only size as relative uniformity. For true size classes, use a calibrated reference or enter measurements from Potato Ruler/manual measurement; the value can then be carried into a quality-linked market listing.",
+    "answer_kn": "ಸಾಮಾನ್ಯ ಫೋಟೋದಿಂದ ಪರಿಚಿತ ಮಾಪಕವಿಲ್ಲದೆ ಮಿಲಿಮೀಟರ್ ಗಾತ್ರವನ್ನು ನಿಖರವಾಗಿ ಪಡೆಯಲು ಸಾಧ್ಯವಿಲ್ಲ. ಆದ್ದರಿಂದ TuberIntel ಚಿತ್ರದಿಂದ ಸಂಬಂಧಿತ ಗಾತ್ರ ಸಮಾನತೆಯನ್ನು ಮಾತ್ರ ಬಳಸುತ್ತದೆ. ನಿಜವಾದ ಗಾತ್ರ ವರ್ಗಕ್ಕಾಗಿ ಕ್ಯಾಲಿಬ್ರೇಟ್ ಮಾಡಿದ ರೆಫರೆನ್ಸ್ ಅಥವಾ Potato Ruler/ಕೈಮಾಪನದ ಅಳತೆಯನ್ನು ನಮೂದಿಸಿ; ನಂತರ ಅದನ್ನು ಗುಣಮಟ್ಟ-ಲಿಂಕ್ ಮಾಡಿದ ಮಾರುಕಟ್ಟೆ ಲಿಸ್ಟಿಂಗ್‌ಗೆ ಸೇರಿಸಬಹುದು."
+  },
+  {
+    "id": "sell-now",
+    "title": "When selling now is usually stronger",
+    "keywords": ["sell", "sell now", "mandi", "price", "fresh market", "market", "buyer"],
+    "answer_en": "Selling now becomes stronger when the current market price is competitive, the batch has good fresh-market quality, storage or transport costs are high, or deterioration risk is rising. Compare net realization after transport, handling, rejection exposure and commissions rather than comparing only the headline mandi price.",
+    "answer_kn": "ಪ್ರಸ್ತುತ ಮಾರುಕಟ್ಟೆ ಬೆಲೆ ಉತ್ತಮವಾಗಿದ್ದಾಗ, ಬ್ಯಾಚ್ ತಾಜಾ ಮಾರುಕಟ್ಟೆ ಗುಣಮಟ್ಟ ಹೊಂದಿದ್ದಾಗ, ಸಂಗ್ರಹ/ಸಾಗಣೆ ವೆಚ್ಚ ಹೆಚ್ಚಾಗಿದ್ದಾಗ ಅಥವಾ ಗುಣಮಟ್ಟ ಕುಸಿತದ ಅಪಾಯ ಹೆಚ್ಚಾಗಿದ್ದಾಗ ತಕ್ಷಣ ಮಾರಾಟ ಬಲವಾದ ಆಯ್ಕೆಯಾಗಬಹುದು. ಕೇವಲ ಮಂಡಿ ಬೆಲೆಯ ಬದಲು ಸಾಗಣೆ, ಹ್ಯಾಂಡ್ಲಿಂಗ್ ಮತ್ತು ತಿರಸ್ಕಾರ ಅಪಾಯದ ನಂತರದ ಶುದ್ಧ ಮೌಲ್ಯವನ್ನು ಹೋಲಿಸಿ."
+  },
+  {
+    "id": "storage",
+    "title": "Storage decision",
+    "keywords": ["store", "storage", "cold storage", "hold", "days", "loss", "sprout"],
+    "answer_en": "Storage is justified only when the expected future price uplift is larger than storage cost, extra handling, shrinkage/quality loss and risk. Avoid holding visibly weak or sprouting lots for long periods. TuberIntel's storage calculator shows the break-even future price so the decision is auditable.",
+    "answer_kn": "ಭವಿಷ್ಯದ ಬೆಲೆ ಏರಿಕೆ ಸಂಗ್ರಹ ವೆಚ್ಚ, ಹೆಚ್ಚುವರಿ ಹ್ಯಾಂಡ್ಲಿಂಗ್, ತೂಕ/ಗುಣಮಟ್ಟ ನಷ್ಟ ಮತ್ತು ಅಪಾಯಕ್ಕಿಂತ ಹೆಚ್ಚು ಇದ್ದಾಗ ಮಾತ್ರ ಸಂಗ್ರಹಣೆ ಆರ್ಥಿಕವಾಗಿ ಸೂಕ್ತ. ಮೊಳಕೆಯಾದ ಅಥವಾ ದುರ್ಬಲ ಲಾಟ್‌ಗಳನ್ನು ಹೆಚ್ಚು ದಿನ ಹಿಡಿಯಬೇಡಿ. TuberIntel ಬ್ರೇಕ್-ಈವನ್ ಭವಿಷ್ಯ ಬೆಲೆಯನ್ನು ತೋರಿಸುತ್ತದೆ."
+  },
+  {
+    "id": "processing",
+    "title": "Processing pathway",
+    "keywords": ["process", "processing", "chips", "fries", "processor", "factory", "grade c"],
+    "answer_en": "Processing can be a better outlet for a batch that has acceptable internal/commercial usefulness but lower fresh-market appearance. The processor's own size, dry-matter, sugar and defect specification still decides acceptance; TuberIntel should not treat one universal A/B/C/D rule as a buyer contract.",
+    "answer_kn": "ತಾಜಾ ಮಾರುಕಟ್ಟೆ ರೂಪ ಕಡಿಮೆ ಇದ್ದರೂ ವಾಣಿಜ್ಯ ಬಳಕೆಗೆ ಯೋಗ್ಯವಾದ ಬ್ಯಾಚ್‌ಗೆ ಸಂಸ್ಕರಣೆ ಉತ್ತಮ ಮಾರ್ಗವಾಗಬಹುದು. ಆದರೆ ಪ್ರೊಸೆಸರ್‌ನ ಗಾತ್ರ, ಡ್ರೈ ಮ್ಯಾಟರ್, ಸಕ್ಕರೆ ಮತ್ತು ದೋಷ ನಿಯಮಗಳೇ ಅಂತಿಮ ಸ್ವೀಕೃತಿಯನ್ನು ನಿರ್ಧರಿಸುತ್ತವೆ; ಒಂದೇ A/B/C/D ನಿಯಮವನ್ನು ಖರೀದಿದಾರ ಒಪ್ಪಂದವೆಂದು ಪರಿಗಣಿಸಬಾರದು."
+  },
+  {
+    "id": "market-listing",
+    "title": "Creating a trade listing",
+    "keywords": ["listing", "post", "buyer", "seller", "trade", "favorite", "find buyers", "find sellers"],
+    "answer_en": "Use the Trade page to create a BUY requirement or SELL offer with variety, quantity, price and location. A SELL post can be linked to an analyzed TuberIntel batch; when linked, the listing carries the measured quality grade/score as a verified-in-system quality signal. You can filter by location/variety, sort by price or quantity, save favorites and manage your own postings.",
+    "answer_kn": "Trade ಪುಟದಲ್ಲಿ ತಳಿ, ಪ್ರಮಾಣ, ಬೆಲೆ ಮತ್ತು ಸ್ಥಳದೊಂದಿಗೆ BUY ಅಗತ್ಯ ಅಥವಾ SELL ಆಫರ್ ರಚಿಸಬಹುದು. SELL ಪೋಸ್ಟ್ ಅನ್ನು ವಿಶ್ಲೇಷಿಸಿದ TuberIntel ಬ್ಯಾಚ್‌ಗೆ ಲಿಂಕ್ ಮಾಡಿದರೆ ಅದರ ಗುಣಮಟ್ಟ ಗ್ರೇಡ್/ಸ್ಕೋರ್ ಲಿಸ್ಟಿಂಗ್‌ಗೆ ಸೇರುತ್ತದೆ. ಸ್ಥಳ/ತಳಿ ಫಿಲ್ಟರ್, ಬೆಲೆ/ಪ್ರಮಾಣ ಸೋರ್ಟ್, ಫೇವರಿಟ್ ಮತ್ತು ನಿಮ್ಮ ಪೋಸ್ಟ್ ನಿರ್ವಹಣೆ ಲಭ್ಯ."
+  },
+  {
+    "id": "transport",
+    "title": "Transport economics",
+    "keywords": ["transport", "truck", "distance", "freight", "loading", "unloading", "cost"],
+    "answer_en": "Compare markets using net value, not distance alone. TuberIntel estimates line-haul cost from tonnes × distance × rate and adds loading, unloading and other charges. A farther mandi is worthwhile only when its expected price advantage exceeds the extra logistics cost and risk.",
+    "answer_kn": "ಮಾರುಕಟ್ಟೆಗಳನ್ನು ಕೇವಲ ದೂರದಿಂದ ಅಲ್ಲ, ಶುದ್ಧ ಮೌಲ್ಯದಿಂದ ಹೋಲಿಸಿ. TuberIntel ಟನ್ × ದೂರ × ದರದಿಂದ ಲೈನ್-ಹಾಲ್ ವೆಚ್ಚ ಲೆಕ್ಕಿಸಿ ಲೋಡಿಂಗ್, ಅನ್‌ಲೋಡಿಂಗ್ ಮತ್ತು ಇತರೆ ವೆಚ್ಚಗಳನ್ನು ಸೇರಿಸುತ್ತದೆ. ದೂರದ ಮಂಡಿಯ ಬೆಲೆ ಲಾಭ ಹೆಚ್ಚುವರಿ ಸಾಗಣೆ ವೆಚ್ಚ ಮತ್ತು ಅಪಾಯಕ್ಕಿಂತ ಹೆಚ್ಚು ಇದ್ದಾಗ ಮಾತ್ರ ಅದು ಸೂಕ್ತ."
+  },
+  {
+    "id": "market-data",
+    "title": "Mandi price data",
+    "keywords": ["live price", "agmarknet", "data gov", "data.gov", "market data", "demo data", "price source"],
+    "answer_en": "When DATA_GOV_API_KEY is configured, TuberIntel can refresh official data.gov.in / AGMARKNET potato price records. Without a key, the app stays functional with seeded demonstration prices and labels them as demo data instead of pretending they are live.",
+    "answer_kn": "DATA_GOV_API_KEY ಹೊಂದಿಸಿದಾಗ TuberIntel ಅಧಿಕೃತ data.gov.in / AGMARKNET ಆಲೂಗಡ್ಡೆ ಬೆಲೆ ದಾಖಲೆಗಳನ್ನು ರಿಫ್ರೆಶ್ ಮಾಡಬಹುದು. ಕೀ ಇಲ್ಲದಿದ್ದರೂ ಡೆಮೊ ಬೆಲೆಗಳೊಂದಿಗೆ ಅಪ್ಲಿಕೇಶನ್ ಕೆಲಸ ಮಾಡುತ್ತದೆ ಮತ್ತು ಅವನ್ನು ಲೈವ್ ಎಂದು ತಪ್ಪಾಗಿ ತೋರಿಸುವುದಿಲ್ಲ."
+  },
+  {
+    "id": "image-capture",
+    "title": "How to photograph potatoes for analysis",
+    "keywords": ["photo", "image", "camera", "capture", "lighting", "blur", "background"],
+    "answer_en": "For a useful quality scan, spread potatoes so most are visible, avoid heavy overlap, use even daylight or diffuse light, keep the camera steady, avoid strong shadows/glare and capture several views from the same lot. TuberIntel checks blur and exposure and can reject unusable images instead of silently producing a confident result.",
+    "answer_kn": "ಉತ್ತಮ ಗುಣಮಟ್ಟ ಸ್ಕ್ಯಾನ್‌ಗಾಗಿ ಆಲೂಗಡ್ಡೆಗಳನ್ನು ಹೆಚ್ಚಿನ ಭಾಗ ಕಾಣುವಂತೆ ಹರಡಿ, ಹೆಚ್ಚು ಓವರ್‌ಲ್ಯಾಪ್ ತಪ್ಪಿಸಿ, ಸಮ ಬೆಳಕು ಬಳಸಿ, ಕ್ಯಾಮೆರಾವನ್ನು ಸ್ಥಿರವಾಗಿಡಿ ಮತ್ತು ಒಂದೇ ಲಾಟ್‌ನ ಹಲವು ದೃಶ್ಯಗಳನ್ನು ತೆಗೆದುಕೊಳ್ಳಿ. TuberIntel ಬ್ಲರ್ ಮತ್ತು ಎಕ್ಸ್‌ಪೋಷರ್ ಪರಿಶೀಲಿಸಿ ಬಳಕೆಗೆ ಅಸಮರ್ಪಕ ಚಿತ್ರವನ್ನು ತಿರಸ್ಕರಿಸಬಹುದು."
+  },
+  {
+    "id": "safety-storage",
+    "title": "Basic post-harvest handling",
+    "keywords": ["handling", "ventilation", "dry", "rot", "damaged", "storage safety"],
+    "answer_en": "Keep harvested tubers shaded, dry and ventilated, minimize drops and rough handling, and separate visibly rotten or badly damaged potatoes so deterioration does not spread through the lot. Storage conditions depend on intended use and variety; use local agronomy/cold-storage guidance for exact temperature and treatment decisions.",
+    "answer_kn": "ಕೊಯ್ಲಿನ ನಂತರ ಕಂದಗಳನ್ನು ನೆರಳಿನಲ್ಲಿ, ಒಣವಾಗಿ ಮತ್ತು ಗಾಳಿಯಾಡುವಂತೆ ಇಡಿ, ಬಿದ್ದು ಹೊಡೆತವಾಗದಂತೆ ನೋಡಿಕೊಳ್ಳಿ ಮತ್ತು ಕುಟ್ಟಿದ/ತೀವ್ರ ಹಾನಿಯಾದ ಕಂದಗಳನ್ನು ಬೇರ್ಪಡಿಸಿ. ನಿಖರ ತಾಪಮಾನ ಮತ್ತು ಚಿಕಿತ್ಸೆಗೆ ತಳಿ/ಬಳಕೆ ಆಧಾರಿತ ಸ್ಥಳೀಯ ಕೃಷಿ ಅಥವಾ ಕೋಲ್ಡ್ ಸ್ಟೋರೇಜ್ ಸಲಹೆ ಅನುಸರಿಸಿ."
+  }
+]

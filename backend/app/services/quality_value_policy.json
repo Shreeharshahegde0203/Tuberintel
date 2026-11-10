@@ -1,0 +1,7 @@
+{
+  "version": "quality-value-v1",
+  "calibration_status": "uncalibrated_scenario",
+  "reference_quality_score": 88.0,
+  "discount_exponent": 1.5,
+  "note": "Prototype curve, not an official grade-to-price schedule. Calibrate using paired batch inspections and actual buyer prices."
+}

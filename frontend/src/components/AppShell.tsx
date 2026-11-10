@@ -1,32 +1,30 @@
 import {
   BarChart3,
-  Bell,
   Boxes,
+  Check,
   ChevronDown,
   ClipboardList,
-  Home,
-  Landmark,
+  Database,
   Languages,
+  Landmark,
   LogOut,
-  MapPin,
   Menu,
   Newspaper,
   PackageCheck,
   Search,
   Settings,
-  Snowflake,
-  Truck,
+  Store,
   UserRound,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { persistMarketLocation, readMarketLocation, type MarketLocation } from '../data/marketLocations'
+import { FarmerAssistant } from './FarmerAssistant'
 import { useI18n } from '../i18n/I18nContext'
-import { getMandiDirectory, getMandiDistricts, getMandiStates } from '../services/api'
-import type { MandiDirectoryItem, MarketDistrictOption, MarketStateOption } from '../types'
-import '../market-ui-phase1.css'
+import { persistMarketLocation, readMarketLocation, type MarketLocation } from '../data/marketLocations'
+import { getMandiDirectory, getMandiStates } from '../services/api'
+import type { MandiDirectoryItem, MarketStateOption } from '../types'
 
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -35,80 +33,90 @@ export function AppShell() {
   const [query, setQuery] = useState('')
   const [location, setLocation] = useState<MarketLocation>(() => readMarketLocation())
   const [draftLocation, setDraftLocation] = useState<MarketLocation>(() => readMarketLocation())
-  const [states, setStates] = useState<MarketStateOption[]>([])
-  const [districts, setDistricts] = useState<MarketDistrictOption[]>([])
-  const [markets, setMarkets] = useState<MandiDirectoryItem[]>([])
-  const [marketSearch, setMarketSearch] = useState('')
-  const [loadingLocation, setLoadingLocation] = useState(false)
-  const locationWrapRef = useRef<HTMLDivElement | null>(null)
-  const profileWrapRef = useRef<HTMLDivElement | null>(null)
+  const [stateOptions, setStateOptions] = useState<MarketStateOption[]>([])
+  const [directoryMandis, setDirectoryMandis] = useState<MandiDirectoryItem[]>([])
+  const [locationLoading, setLocationLoading] = useState(false)
+  const [locationMessage, setLocationMessage] = useState('')
+  const locationWrapRef = useRef<HTMLDivElement>(null)
+  const profileWrapRef = useRef<HTMLDivElement>(null)
   const { user, signOut } = useAuth()
   const { language, setLanguage } = useI18n()
   const navigate = useNavigate()
 
   const copy = language === 'kn'
     ? {
-        overview: 'ಅವಲೋಕನ',
-        mandi: 'ಮಂಡಿ ಬೆಲೆಗಳು',
-        inspect: 'ಗುಣಮಟ್ಟ ಪರಿಶೀಲನೆ',
-        history: 'ಬ್ಯಾಚ್ ಇತಿಹಾಸ',
-        models: 'ಮಾದರಿಗಳು ಮತ್ತು ವಿಧಾನಗಳು',
-        more: 'ಇನ್ನಷ್ಟು',
-        analytics: 'ಬೆಲೆ ವಿಶ್ಲೇಷಣೆ',
-        storage: 'ಸಂಗ್ರಹ ನಿರ್ಧಾರ',
-        transport: 'ಸಾಗಣೆ ಲೆಕ್ಕ',
-        news: 'ಸುದ್ದಿ ಮತ್ತು ಯೋಜನೆಗಳು',
-        search: 'ಮಂಡಿ, ತಳಿ, ಸುದ್ದಿ ಹುಡುಕಿ…',
-        location: 'ಆಯ್ದ ಮಾರುಕಟ್ಟೆ',
-        state: 'ರಾಜ್ಯ',
-        district: 'ಜಿಲ್ಲೆ / ನಗರ',
-        market: 'ಎಪಿಎಂಸಿ / ಮಂಡಿ',
-        apply: 'ಸ್ಥಳ ಅನ್ವಯಿಸಿ',
-        account: 'ನನ್ನ ಖಾತೆ',
-        signOut: 'ಸೈನ್ ಔಟ್',
-        loading: 'ಮಾರುಕಟ್ಟೆ ಪಟ್ಟಿಯನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ…',
-        empty: 'ಈ ಆಯ್ಕೆಗಾಗಿ ಮಾರುಕಟ್ಟೆಗಳು ಲಭ್ಯವಿಲ್ಲ.',
+        overview: 'ಅವಲೋಕನ', inspect: 'ಗುಣಮಟ್ಟ ಪರಿಶೀಲನೆ', market: 'ಮಂಡಿ ಬೆಲೆ', history: 'ಬ್ಯಾಚ್‌ಗಳು',
+        models: 'ಮಾದರಿಗಳು ಮತ್ತು ವಿಧಾನಗಳು', trade: 'ಖರೀದಿ / ಮಾರಾಟ', analytics: 'ಬೆಲೆ ವಿಶ್ಲೇಷಣೆ', news: 'ಮಾರುಕಟ್ಟೆ ಮಾಹಿತಿ',
+        search: 'ಮಂಡಿ, ತಳಿ ಅಥವಾ ಸುದ್ದಿ ಹುಡುಕಿ…', location: 'ಆಯ್ದ ಮಾರುಕಟ್ಟೆ', account: 'ನನ್ನ ಖಾತೆ', signOut: 'ಸೈನ್ ಔಟ್',
+        state: 'ರಾಜ್ಯ', district: 'ಜಿಲ್ಲೆ', mandi: 'APMC / ಮಂಡಿ', apply: 'ಮಾರುಕಟ್ಟೆ ಆಯ್ಕೆಮಾಡಿ',
+        noMandis: 'ಈ ರಾಜ್ಯದ ಅಧಿಕೃತ ಮಂಡಿ ಡೈರೆಕ್ಟರಿಯನ್ನು ಇನ್ನೂ ಸಿಂಕ್ ಮಾಡಿಲ್ಲ.', primary: 'ಕಾರ್ಯಸ್ಥಳ', intelligence: 'ಮಾಹಿತಿ', technical: 'ತಾಂತ್ರಿಕ',
       }
     : {
-        overview: 'Overview',
-        mandi: 'Mandi Prices',
-        inspect: 'Quality Check',
-        history: 'Batch History',
-        models: 'Models & Methods',
-        more: 'More',
-        analytics: 'Price Analytics',
-        storage: 'Storage Decision',
-        transport: 'Transport Estimate',
-        news: 'News & Schemes',
-        search: 'Search mandis, varieties, news…',
-        location: 'Selected market',
-        state: 'State',
-        district: 'District / city',
-        market: 'APMC / market',
-        apply: 'Apply location',
-        account: 'My account',
-        signOut: 'Sign out',
-        loading: 'Loading market directory…',
-        empty: 'No markets are available for this selection.',
+        overview: 'Overview', inspect: 'Quality check', market: 'Mandi prices', history: 'Batches',
+        models: 'Models & methods', trade: 'Buy / Sell', analytics: 'Price analytics', news: 'Market intelligence',
+        search: 'Search mandi, variety or news…', location: 'Selected market', account: 'My account', signOut: 'Sign out',
+        state: 'State', district: 'District', mandi: 'APMC / mandi', apply: 'Use this market',
+        noMandis: 'The official reporting-mandi directory for this state has not been synced yet.', primary: 'Workspace', intelligence: 'Intelligence', technical: 'Technical',
       }
 
-  const primaryNav = useMemo(
-    () => [
-      { to: '/', label: copy.overview, icon: Home },
-      { to: '/market', label: copy.mandi, icon: Landmark },
-      { to: '/analyze', label: copy.inspect, icon: PackageCheck },
-      { to: '/history', label: copy.history, icon: ClipboardList },
-      { to: '/models', label: copy.models, icon: Boxes },
-    ],
-    [copy.history, copy.inspect, copy.mandi, copy.models, copy.overview],
+  const primaryNav = useMemo(() => [
+    { to: '/', label: copy.overview, icon: Store },
+    { to: '/market', label: copy.market, icon: Landmark },
+    { to: '/analyze', label: copy.inspect, icon: PackageCheck },
+    { to: '/history', label: copy.history, icon: ClipboardList },
+    { to: '/trade', label: copy.trade, icon: Boxes },
+  ], [copy.overview, copy.market, copy.inspect, copy.history, copy.trade])
+
+  const intelligenceNav = useMemo(() => [
+    { to: '/analytics', label: copy.analytics, icon: BarChart3 },
+    { to: '/news', label: copy.news, icon: Newspaper },
+  ], [copy.analytics, copy.news])
+
+  const districtOptions = useMemo(
+    () => Array.from(new Set(directoryMandis.map((item) => item.district))).sort((a, b) => a.localeCompare(b)),
+    [directoryMandis],
+  )
+  const mandiOptions = useMemo(
+    () => directoryMandis.filter((item) => !draftLocation.district || item.district === draftLocation.district),
+    [directoryMandis, draftLocation.district],
   )
 
-  const moreNav = [
-    { label: copy.analytics, icon: BarChart3 },
-    { label: copy.storage, icon: Snowflake },
-    { label: copy.transport, icon: Truck },
-    { label: copy.news, icon: Newspaper },
-  ]
+  const loadDirectory = async (state: string, preferred?: MarketLocation) => {
+    setLocationLoading(true)
+    setLocationMessage('')
+    try {
+      const data = await getMandiDirectory(state)
+      setDirectoryMandis(data.mandis || [])
+      const districts = Array.from(new Set((data.mandis || []).map((item) => item.district))).sort((a, b) => a.localeCompare(b))
+      const district = preferred?.district && districts.includes(preferred.district) ? preferred.district : districts[0] || ''
+      const possibleMandis = (data.mandis || []).filter((item) => !district || item.district === district)
+      const market = preferred?.market && possibleMandis.some((item) => item.market === preferred.market)
+        ? preferred.market
+        : possibleMandis[0]?.market || ''
+      setDraftLocation({ state: data.state || state, district, market })
+      if (!data.mandis?.length) setLocationMessage(copy.noMandis)
+    } catch (error: any) {
+      setDirectoryMandis([])
+      setLocationMessage(error?.response?.data?.detail || error.message || copy.noMandis)
+      setDraftLocation({ state, district: '', market: '' })
+    } finally {
+      setLocationLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    void getMandiStates()
+      .then((items) => { if (active) setStateOptions(items || []) })
+      .catch(() => { if (active) setStateOptions([]) })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    void loadDirectory(location.state, location)
+    // The selected market is intentionally loaded once here; subsequent loads are user-driven.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -117,11 +125,7 @@ export function AppShell() {
       if (profileWrapRef.current && !profileWrapRef.current.contains(target)) setProfileOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setLocationOpen(false)
-        setProfileOpen(false)
-        setMobileOpen(false)
-      }
+      if (event.key === 'Escape') { setLocationOpen(false); setProfileOpen(false); setMobileOpen(false) }
     }
     document.addEventListener('mousedown', closeMenus)
     document.addEventListener('keydown', closeOnEscape)
@@ -131,37 +135,6 @@ export function AppShell() {
     }
   }, [])
 
-  useEffect(() => {
-    void getMandiStates().then(setStates).catch(() => setStates([]))
-  }, [])
-
-  useEffect(() => {
-    if (!draftLocation.state) return
-    setLoadingLocation(true)
-    void Promise.all([
-      getMandiDistricts(draftLocation.state).catch(() => [] as MarketDistrictOption[]),
-      getMandiDirectory(draftLocation.state, draftLocation.city || undefined, marketSearch || undefined, 30, 0).catch(
-        () =>
-          ({
-            state: draftLocation.state,
-            district: draftLocation.city || null,
-            total: 0,
-            limit: 30,
-            offset: 0,
-            items: [],
-            source: 'Unavailable',
-            live_data: false,
-            note: null,
-          }),
-      ),
-    ])
-      .then(([districtResult, marketResult]) => {
-        setDistricts(districtResult)
-        setMarkets(marketResult.items)
-      })
-      .finally(() => setLoadingLocation(false))
-  }, [draftLocation.state, draftLocation.city, marketSearch])
-
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
     const value = query.trim()
@@ -170,10 +143,14 @@ export function AppShell() {
     setQuery('')
   }
 
-  const openLocation = () => {
-    setDraftLocation(location)
-    setLocationOpen((current) => !current)
-    setProfileOpen(false)
+  const changeDraftState = (state: string) => {
+    setDraftLocation({ state, district: '', market: '' })
+    void loadDirectory(state)
+  }
+
+  const changeDraftDistrict = (district: string) => {
+    const firstMarket = directoryMandis.find((item) => item.district === district)?.market || ''
+    setDraftLocation((current) => ({ ...current, district, market: firstMarket }))
   }
 
   const applyLocation = () => {
@@ -182,265 +159,112 @@ export function AppShell() {
     setLocationOpen(false)
   }
 
-  const filteredStates = states.filter((item) => item.name.toLowerCase().includes(marketSearch.toLowerCase()))
-  const filteredDistricts = districts.filter((item) => item.name.toLowerCase().includes(marketSearch.toLowerCase()))
-  const selectedMarketLabel = location.market || location.city || location.state
+  const openLocation = () => {
+    setDraftLocation(location)
+    if (!locationOpen) void loadDirectory(location.state, location)
+    setLocationOpen((value) => !value)
+    setProfileOpen(false)
+  }
+
+  const navBlock = (items: typeof primaryNav, closeMobile = false) => items.map(({ to, label, icon: Icon }) => (
+    <NavLink key={to} to={to} end={to === '/'} onClick={closeMobile ? () => setMobileOpen(false) : undefined}>
+      <Icon size={18} />
+      <span>{label}</span>
+    </NavLink>
+  ))
 
   return (
-    <div className="pb-app-shell">
-      <header className="pb-header">
-        <div className="pb-header-top">
-          <button className="pb-mobile-menu" type="button" onClick={() => setMobileOpen(true)} aria-label="Open menu">
-            <Menu size={23} />
-          </button>
-
-          <NavLink to="/" className="pb-brand" aria-label="TuberIntel home">
-            <span className="pb-brand-mascot">
-              <img src="/brand/tuber-mitra.png" alt="TuberIntel mascot" />
-            </span>
-            <span>
-              <strong>TuberIntel</strong>
-              <small>Potato decision intelligence</small>
-            </span>
+    <div className="ops-app-shell">
+      <aside className={`ops-sidebar ${mobileOpen ? 'open' : ''}`} aria-label="Application navigation">
+        <div className="ops-sidebar-head">
+          <NavLink to="/" className="ops-brand" aria-label="TuberIntel home" onClick={() => setMobileOpen(false)}>
+            <img src="/brand/tuber-mitra.png" alt="" />
+            <span><strong>TuberIntel</strong><small>Potato operations</small></span>
           </NavLink>
+          <button className="ops-sidebar-close" type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={20} /></button>
+        </div>
 
-          <div className="pb-location-wrap" ref={locationWrapRef}>
-            <button className="pb-location-button" type="button" onClick={openLocation} aria-expanded={locationOpen}>
-              <span className="pb-location-icon">
-                <MapPin size={18} />
-              </span>
-              <span className="pb-location-copy">
-                <small>{copy.location}</small>
-                <strong>{selectedMarketLabel}</strong>
-                <em>{location.city ? `${location.city}, ` : ''}{location.state}</em>
-              </span>
-              <ChevronDown size={16} />
+        <div className="ops-nav-section">
+          <span className="ops-nav-label">{copy.primary}</span>
+          <nav className="ops-nav">{navBlock(primaryNav, true)}</nav>
+        </div>
+
+        <div className="ops-nav-section">
+          <span className="ops-nav-label">{copy.intelligence}</span>
+          <nav className="ops-nav">{navBlock(intelligenceNav, true)}</nav>
+        </div>
+
+        <div className="ops-sidebar-spacer" />
+
+        <div className="ops-nav-section ops-nav-secondary">
+          <span className="ops-nav-label">{copy.technical}</span>
+          <nav className="ops-nav">
+            <NavLink to="/models" onClick={() => setMobileOpen(false)}><Database size={18} /><span>{copy.models}</span></NavLink>
+          </nav>
+        </div>
+
+        <div className="ops-sidebar-profile">
+          <span className="ops-user-avatar"><UserRound size={18} /></span>
+          <div><strong>{user?.name || 'TuberIntel user'}</strong><small>{user?.email || copy.account}</small></div>
+        </div>
+      </aside>
+
+      {mobileOpen && <button className="ops-sidebar-backdrop" type="button" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
+
+      <div className="ops-workspace">
+        <header className="ops-topbar">
+          <button className="ops-mobile-menu" type="button" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu size={21} /></button>
+
+          <div className="ops-location-wrap" ref={locationWrapRef}>
+            <button className="ops-location-button" type="button" onClick={openLocation} aria-expanded={locationOpen}>
+              <Landmark size={17} />
+              <span><small>{copy.location}</small><strong>{location.market || location.district || location.state}</strong></span>
+              <em>{location.district ? `${location.district}, ${location.state}` : location.state}</em>
+              <ChevronDown size={15} />
             </button>
             {locationOpen && (
-              <div className="pb-location-popover pb-location-directory">
-                <div className="pb-popover-heading">
-                  <span className="pb-popover-icon">
-                    <Landmark size={18} />
-                  </span>
-                  <div>
-                    <strong>{copy.location}</strong>
-                    <small>{draftLocation.market || draftLocation.city || draftLocation.state}</small>
-                  </div>
-                </div>
-                <label className="pb-popover-search">
-                  <Search size={16} />
-                  <input
-                    value={marketSearch}
-                    onChange={(event) => setMarketSearch(event.target.value)}
-                    placeholder={copy.search}
-                  />
-                </label>
-                <div className="pb-directory-columns">
-                  <div>
-                    <span>{copy.state}</span>
-                    <div className="pb-directory-list">
-                      {filteredStates.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={draftLocation.state === item.name ? 'active' : ''}
-                          onClick={() => setDraftLocation({ state: item.name, city: '', market: '' })}
-                        >
-                          <strong>{item.name}</strong>
-                          <small>{item.market_count} markets</small>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <span>{copy.district}</span>
-                    <div className="pb-directory-list">
-                      {filteredDistricts.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={draftLocation.city === item.name ? 'active' : ''}
-                          onClick={() => setDraftLocation((current) => ({ ...current, city: item.name, market: '' }))}
-                        >
-                          <strong>{item.name}</strong>
-                          <small>{item.market_count} markets</small>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <span>{copy.market}</span>
-                    <div className="pb-directory-list">
-                      {markets.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={draftLocation.market === item.name ? 'active' : ''}
-                          onClick={() =>
-                            setDraftLocation({
-                              state: item.state,
-                              city: item.district,
-                              market: item.name,
-                            })
-                          }
-                        >
-                          <strong>{item.name}</strong>
-                          <small>{item.district}, {item.state}</small>
-                        </button>
-                      ))}
-                      {!markets.length && !loadingLocation && <div className="pb-directory-empty">{copy.empty}</div>}
-                      {loadingLocation && <div className="pb-directory-empty">{copy.loading}</div>}
-                    </div>
-                  </div>
-                </div>
-                <button className="pb-location-apply" type="button" onClick={applyLocation}>
-                  {copy.apply}
-                </button>
+              <div className="ops-location-popover">
+                <div className="ops-popover-title"><Landmark size={18} /><div><strong>{copy.location}</strong><small>{draftLocation.market || draftLocation.district || draftLocation.state}</small></div></div>
+                <label><span>{copy.state}</span><select value={draftLocation.state} onChange={(event) => changeDraftState(event.target.value)} disabled={locationLoading}>{stateOptions.map((item) => <option value={item.name} key={item.code}>{item.name}{item.mandi_count ? ` (${item.mandi_count})` : ''}</option>)}</select></label>
+                <label><span>{copy.district}</span><select value={draftLocation.district} onChange={(event) => changeDraftDistrict(event.target.value)} disabled={locationLoading || !districtOptions.length}><option value="">{locationLoading ? 'Loading…' : 'Select district'}</option>{districtOptions.map((district) => <option value={district} key={district}>{district}</option>)}</select></label>
+                <label><span>{copy.mandi}</span><select value={draftLocation.market} onChange={(event) => setDraftLocation((current) => ({ ...current, market: event.target.value }))} disabled={locationLoading || !mandiOptions.length}><option value="">{locationLoading ? 'Loading…' : 'Select APMC / mandi'}</option>{mandiOptions.map((item) => <option value={item.market} key={`${item.district}-${item.market}`}>{item.market}</option>)}</select></label>
+                {locationMessage && <p className="ops-location-message">{locationMessage}</p>}
+                <button className="ops-location-apply" type="button" onClick={applyLocation} disabled={!draftLocation.state}><Check size={16} />{copy.apply}</button>
               </div>
             )}
           </div>
 
-          <form className="pb-global-search" onSubmit={submitSearch}>
-            <Search size={19} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} />
+          <form className="ops-global-search" onSubmit={submitSearch}>
+            <Search size={17} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} aria-label={copy.search} />
           </form>
 
-          <div className="pb-header-actions">
-            <button className="pb-icon-button" type="button" title="Notifications">
-              <Bell size={20} />
-              <span className="pb-notification-dot" />
-            </button>
-            <div className="pb-profile-wrap" ref={profileWrapRef}>
-              <button
-                className="pb-profile-button"
-                type="button"
-                onClick={() => {
-                  setProfileOpen((value) => !value)
-                  setLocationOpen(false)
-                }}
-              >
-                {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span><UserRound size={20} /></span>}
-                <div>
-                  <strong>{user?.name || 'TuberIntel user'}</strong>
-                  <small className="pb-profile-email">{user?.email || copy.account}</small>
-                </div>
-                <ChevronDown size={16} />
+          <div className="ops-topbar-actions">
+            <button className="ops-language-button" type="button" onClick={() => setLanguage(language === 'en' ? 'kn' : 'en')}><Languages size={17} /><span>{language === 'en' ? 'ಕನ್ನಡ' : 'English'}</span></button>
+            <div className="ops-profile-wrap" ref={profileWrapRef}>
+              <button className="ops-profile-button" type="button" onClick={() => { setProfileOpen((value) => !value); setLocationOpen(false) }} aria-expanded={profileOpen}>
+                {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span><UserRound size={18} /></span>}
+                <strong>{user?.name || 'Farmer'}</strong>
+                <ChevronDown size={15} />
               </button>
               {profileOpen && (
-                <div className="pb-profile-popover">
-                  <div className="pb-profile-summary">
-                    {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span><UserRound size={22} /></span>}
-                    <div>
-                      <strong>{user?.name || 'TuberIntel user'}</strong>
-                      <small>{user?.email}</small>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setLanguage(language === 'en' ? 'kn' : 'en')}>
-                    <Languages size={17} />
-                    {language === 'en' ? 'ಕನ್ನಡ' : 'English'}
-                  </button>
-                  <NavLink to="/models" onClick={() => setProfileOpen(false)}>
-                    <Settings size={17} />
-                    {copy.models}
-                  </NavLink>
-                  <button className="danger" type="button" onClick={() => void signOut()}>
-                    <LogOut size={17} />
-                    {copy.signOut}
-                  </button>
+                <div className="ops-profile-popover">
+                  <div className="ops-profile-summary"><span><UserRound size={19} /></span><div><strong>{user?.name || 'TuberIntel user'}</strong><small>{user?.email || copy.account}</small></div></div>
+                  <NavLink to="/models" onClick={() => setProfileOpen(false)}><Settings size={16} />{copy.models}</NavLink>
+                  <button className="danger" type="button" onClick={() => void signOut()}><LogOut size={16} />{copy.signOut}</button>
                 </div>
               )}
             </div>
           </div>
-        </div>
+        </header>
 
-        <nav className="pb-primary-nav" aria-label="Primary navigation">
-          <div className="pb-primary-nav-inner">
-            {primaryNav.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to} end={to === '/'}>
-                <Icon size={17} />
-                <span>{label}</span>
-              </NavLink>
-            ))}
-            <div className="pb-more-menu">
-              <button type="button">
-                <Menu size={17} />
-                <span>{copy.more}</span>
-                <ChevronDown size={15} />
-              </button>
-              <div className="pb-more-popover">
-                {moreNav.map(({ label, icon: Icon }) => (
-                  <span key={label}>
-                    <Icon size={17} />
-                    {label}
-                    <small>Coming soon</small>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </nav>
-      </header>
+        <main className="ops-main"><Outlet /></main>
+      </div>
 
-      <aside className={`pb-mobile-drawer ${mobileOpen ? 'open' : ''}`}>
-        <div className="pb-mobile-drawer-head">
-          <div className="pb-brand">
-            <span className="pb-brand-mascot">
-              <img src="/brand/tuber-mitra.png" alt="" />
-            </span>
-            <span>
-              <strong>TuberIntel</strong>
-              <small>Potato decision intelligence</small>
-            </span>
-          </div>
-          <button type="button" onClick={() => setMobileOpen(false)}>
-            <X size={22} />
-          </button>
-        </div>
-        <button className="pb-drawer-location" type="button" onClick={() => { setMobileOpen(false); openLocation() }}>
-          <MapPin size={18} />
-          <span>
-            <small>{copy.location}</small>
-            <strong>{selectedMarketLabel}, {location.state}</strong>
-          </span>
-          <ChevronDown size={16} />
-        </button>
-        <nav>
-          {primaryNav.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileOpen(false)}>
-              <Icon size={19} />
-              {label}
-            </NavLink>
-          ))}
-          {moreNav.map(({ label, icon: Icon }) => (
-            <span className="disabled" key={label}>
-              <Icon size={19} />
-              {label}
-              <small>Coming soon</small>
-            </span>
-          ))}
-        </nav>
-        <button className="pb-drawer-signout" type="button" onClick={() => void signOut()}>
-          <LogOut size={18} />
-          {copy.signOut}
-        </button>
-      </aside>
-      {mobileOpen && <button className="pb-drawer-backdrop" type="button" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
+      <FarmerAssistant />
 
-      <main className="pb-main">
-        <Outlet />
-      </main>
-
-      <nav className="pb-mobile-bottom-nav" aria-label="Mobile navigation">
-        {primaryNav.slice(0, 4).map(({ to, label, icon: Icon }) => (
-          <NavLink key={to} to={to} end={to === '/'}>
-            <Icon size={20} />
-            <span>{label}</span>
-          </NavLink>
-        ))}
-        <button type="button" onClick={() => setMobileOpen(true)}>
-          <Menu size={20} />
-          <span>{copy.more}</span>
-        </button>
+      <nav className="ops-mobile-bottom-nav" aria-label="Mobile navigation">
+        {primaryNav.slice(0, 5).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={19} /><span>{label === copy.inspect ? (language === 'kn' ? 'ಗುಣಮಟ್ಟ' : 'Quality') : label}</span></NavLink>)}
       </nav>
     </div>
   )

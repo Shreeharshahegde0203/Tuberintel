@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_, select
+
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.auth import AuthenticatedUser, enforce_rate_limit, get_optional_current_user, require_admin_user, require_current_user
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Batch, BatchImage, Feedback, QualityAssessment, Recommendation
+from app.schemas.assistant import AssistantQuery, AssistantResponse
+from app.schemas.marketplace import (
+    ColdStorageRead, FavoriteResponse, ListingCreate, ListingPage, ListingRead, ListingUpdate,
+    MarketplaceSummary, TransportProviderRead,
+)
 from app.schemas.batches import (
     AnalysisOptions,
     BatchCreate,
@@ -22,22 +27,52 @@ from app.schemas.batches import (
     FeedbackCreate,
 )
 from app.schemas.dashboard import DashboardSummary
-from app.schemas.market import MarketAnalytics, MarketDirectoryResponse, MarketFilters, MarketOverview, MarketPriceQuery, MarketPriceRead, MarketStateItem, MarketDistrictItem, MarketSyncResponse
+from app.schemas.market import (
+    ConsolidatedMarketReport,
+    MarketAnalytics,
+    MandiDirectoryResponse,
+    MarketFilters,
+    MarketForecastResponse,
+    MarketOutlookResponse,
+    MarketOverview,
+    MarketStateOption,
+    MarketPriceRead,
+    NewsResponse,
+    StoragePlanRequest,
+    StoragePlanResponse,
+    TransportPlanRequest,
+    TransportPlanResponse,
+    WeatherResponse,
+)
+from app.services.farmer_assistant import FarmerAssistantService
+from app.services.marketplace_service import MarketplaceService
+from app.services.image_analysis import PotatoImageAnalyzer
 from app.services.market_service import MarketService
+from app.services.agmarknet_service import AgmarknetUpstreamError, agmarknet_service
 from app.services.model_registry import ModelRegistry
+from app.services.news_service import NewsService
 from app.services.recommendation_engine import RecommendationEngine
 from app.services.storage_service import StorageService
+from app.services.weather_service import WeatherService
 
 
 router = APIRouter()
 settings = get_settings()
 market_service = MarketService()
+news_service = NewsService()
+weather_service = WeatherService()
 recommendation_engine = RecommendationEngine()
-model_registry = ModelRegistry(settings.quality_model_path, settings.defect_model_path)
+model_registry = ModelRegistry(
+    settings.roi_model_path,
+    settings.condition_model_path or settings.quality_model_path,
+    settings.defect_model_path,
+)
 storage_service = StorageService(settings)
+marketplace_service = MarketplaceService()
+farmer_assistant = FarmerAssistantService()
 
 
-def _load_batch(db: Session, batch_id: int, user: AuthenticatedUser | None = None) -> Batch:
+def _load_batch(db: Session, batch_id: int) -> Batch:
     batch = db.scalar(
         select(Batch)
         .where(Batch.id == batch_id)
@@ -49,8 +84,6 @@ def _load_batch(db: Session, batch_id: int, user: AuthenticatedUser | None = Non
     )
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    if batch.owner_user_id and user and batch.owner_user_id != user.id and not user.is_admin:
-        raise HTTPException(status_code=403, detail="You do not have access to this batch.")
     return batch
 
 
@@ -73,12 +106,27 @@ def _batch_response(batch: Batch) -> dict:
 
 
 @router.get("/health")
+@router.get("/health/live")
 def health() -> dict:
     return {
         "status": "healthy",
         "service": settings.app_name,
         "environment": settings.environment,
         "model_mode": settings.model_mode,
+    }
+
+
+@router.get("/health/ready")
+def readiness(db: Session = Depends(get_db)) -> dict:
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Database is not ready") from exc
+    return {
+        "status": "ready",
+        "database": "ok",
+        "market_data_mode": "live" if settings.data_gov_api_key else "seeded_demo",
+        "assistant_mode": "openai_optional" if settings.openai_api_key else "local_grounded",
     }
 
 
@@ -104,12 +152,8 @@ def models() -> dict:
 
 
 @router.post("/batches", status_code=status.HTTP_201_CREATED)
-def create_batch(
-    payload: BatchCreate,
-    db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
-) -> dict:
-    batch = Batch(batch_code=_batch_code(db), owner_user_id=user.id if user else None, **payload.model_dump())
+def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> dict:
+    batch = Batch(batch_code=_batch_code(db), **payload.model_dump())
     db.add(batch)
     db.commit()
     db.refresh(batch)
@@ -120,18 +164,14 @@ def create_batch(
 def list_batches(
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> list[BatchListItem]:
-    query = (
-        select(Batch)
-        .options(selectinload(Batch.assessment), selectinload(Batch.recommendation))
-        .order_by(Batch.created_at.desc())
-        .limit(limit)
-    )
-    if user and not user.is_admin:
-        query = query.where(or_(Batch.owner_user_id == user.id, Batch.owner_user_id.is_(None)))
     batches = list(
-        db.scalars(query)
+        db.scalars(
+            select(Batch)
+            .options(selectinload(Batch.assessment), selectinload(Batch.recommendation))
+            .order_by(Batch.created_at.desc())
+            .limit(limit)
+        )
     )
     return [
         BatchListItem(
@@ -152,12 +192,8 @@ def list_batches(
 
 
 @router.get("/batches/{batch_id}")
-def get_batch(
-    batch_id: int,
-    db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
-) -> dict:
-    return _batch_response(_load_batch(db, batch_id, user))
+def get_batch(batch_id: int, db: Session = Depends(get_db)) -> dict:
+    return _batch_response(_load_batch(db, batch_id))
 
 
 @router.post("/batches/{batch_id}/images", status_code=status.HTTP_201_CREATED)
@@ -165,9 +201,8 @@ def upload_batch_images(
     batch_id: int,
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> dict:
-    batch = _load_batch(db, batch_id, user)
+    batch = _load_batch(db, batch_id)
     if not files:
         raise HTTPException(status_code=400, detail="Upload at least one potato image")
     if len(files) > 12:
@@ -204,11 +239,8 @@ def analyze_batch(
     batch_id: int,
     options: AnalysisOptions,
     db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
 ) -> dict:
-    from app.services.image_analysis import PotatoImageAnalyzer
-
-    batch = _load_batch(db, batch_id, user)
+    batch = _load_batch(db, batch_id)
     if not batch.images:
         raise HTTPException(status_code=400, detail="Upload at least one image before analysis")
 
@@ -236,6 +268,36 @@ def analyze_batch(
         raise HTTPException(status_code=422, detail={"message": "No image could be analysed", "errors": errors})
 
     aggregated = analyzer.aggregate(analyses, settings.model_mode)
+    if options.measurement_source == "not_available" and (options.measured_length_mm or options.measured_width_mm):
+        raise HTTPException(status_code=422, detail="Set measurement_source when supplying physical measurements")
+    if options.measurement_source != "not_available" and not (options.measured_length_mm or options.measured_width_mm):
+        raise HTTPException(status_code=422, detail="Supply a measured length or width for the selected measurement source")
+    if options.measured_length_mm or options.measured_width_mm:
+        width_mm = options.measured_width_mm or options.measured_length_mm
+        length_mm = options.measured_length_mm or options.measured_width_mm
+        if width_mm < 40:
+            size_class = "S (<40 mm)"
+        elif width_mm < 60:
+            size_class = "M (40â€“59 mm)"
+        elif width_mm < 80:
+            size_class = "L (60â€“79 mm)"
+        else:
+            size_class = "XL (â‰¥80 mm)"
+        summary = dict(aggregated.get("feature_summary") or {})
+        summary["physical_measurement"] = {
+            "length_mm": round(float(length_mm), 1),
+            "width_mm": round(float(width_mm), 1),
+            "length_width_ratio": round(float(length_mm) / max(float(width_mm), 0.1), 2),
+            "source": options.measurement_source,
+            "calibrated": options.measurement_source in {"potato_ruler", "calibrated_image"},
+        }
+        summary["size_class"] = size_class
+        summary["size_class_note"] = "Configurable demo diameter bands; buyer/mandi contracts can override them."
+        aggregated["feature_summary"] = summary
+    else:
+        summary = dict(aggregated.get("feature_summary") or {})
+        summary.setdefault("size_class", "Relative size only â€” physical calibration not supplied")
+        aggregated["feature_summary"] = summary
     if batch.assessment:
         for key, value in aggregated.items():
             setattr(batch.assessment, key, value)
@@ -247,7 +309,16 @@ def analyze_batch(
     db.flush()
 
     latest_markets = market_service.latest_prices(db, state=batch.state)
-    forecast = market_service.forecast(db, state=batch.state, horizon_days=max(30, options.storage_days))
+    forecast_payload = market_service.forecast_detailed(
+        db,
+        state=batch.state,
+        district=batch.district,
+        market=batch.intended_market,
+        variety=batch.variety,
+        horizon_days=settings.price_forecast_max_horizon_days,
+        persist=True,
+    )
+    forecast = forecast_payload["points"]
     recommendation_payload = recommendation_engine.evaluate(batch, assessment, latest_markets, forecast, options)
     if batch.recommendation:
         for key, value in recommendation_payload.items():
@@ -265,13 +336,8 @@ def analyze_batch(
 
 
 @router.post("/batches/{batch_id}/feedback", status_code=status.HTTP_201_CREATED)
-def submit_feedback(
-    batch_id: int,
-    payload: FeedbackCreate,
-    db: Session = Depends(get_db),
-    user: AuthenticatedUser | None = Depends(get_optional_current_user),
-) -> dict:
-    batch = _load_batch(db, batch_id, user)
+def submit_feedback(batch_id: int, payload: FeedbackCreate, db: Session = Depends(get_db)) -> dict:
+    batch = _load_batch(db, batch_id)
     feedback = Feedback(batch_id=batch.id, **payload.model_dump())
     db.add(feedback)
     db.commit()
@@ -285,135 +351,329 @@ def submit_feedback(
 
 @router.get("/market/overview", response_model=MarketOverview)
 def market_overview(state: str = "Karnataka", db: Session = Depends(get_db)) -> dict:
+    ensure_web_prices(db, state=state)
     return market_service.overview(db, state=state)
 
 
-@router.get("/market/directory/states", response_model=list[MarketStateItem])
-def list_market_states(db: Session = Depends(get_db)) -> list[dict]:
-    return market_service.list_states(db)
+@router.get("/market/directory/states", response_model=list[MarketStateOption])
+def market_directory_states(db: Session = Depends(get_db)) -> list[dict]:
+    return market_service.directory_states(db)
 
 
-@router.get("/market/directory/districts", response_model=list[MarketDistrictItem])
-def list_market_districts(state: str = Query(..., min_length=2, max_length=120), db: Session = Depends(get_db)) -> list[dict]:
-    try:
-        return market_service.list_districts(db, state=state)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.get("/market/directory/mandis", response_model=MarketDirectoryResponse)
-def list_markets(
-    state: str | None = Query(default=None, min_length=2, max_length=120),
-    district: str | None = Query(default=None, min_length=2, max_length=120),
-    search: str | None = Query(default=None, min_length=1, max_length=120),
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0, le=10_000),
+@router.get("/market/directory/mandis", response_model=MandiDirectoryResponse)
+def market_directory_mandis(
+    state: str = Query(min_length=2),
+    district: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=2500, ge=1, le=5000),
     db: Session = Depends(get_db),
 ) -> dict:
-    return market_service.list_markets(db, state=state, district=district, search=search, limit=limit, offset=offset)
+    ensure_web_prices(db, state=state)
+    return market_service.mandi_directory(db, state=state, district=district, search=search, limit=limit)
+
+
+@router.post("/market/directory/sync")
+def sync_market_directory(
+    state: str = Query(min_length=2), max_pages: int | None = Query(default=None, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        result = sync_web_prices(db,state=state,force=True)
+        directory = market_service.mandi_directory(db,state=state)
+        return dict(result, state=state, mandi_count=directory["count"], note="Public webpage connector: Bangalore APMC aggregate coverage only; not a complete official APMC directory.")
+    except Exception as exc:
+        raise HTTPException(502, f"Public webpage directory update failed: {exc}") from exc
 
 
 @router.get("/market/filters", response_model=MarketFilters)
-def get_market_filters(
-    state: str | None = Query(default=None, min_length=2, max_length=120),
-    district: str | None = Query(default=None, min_length=2, max_length=120),
-    db: Session = Depends(get_db),
-) -> dict:
-    return market_service.get_filters(db, state=state, district=district)
+def market_filters(state: str | None = None, db: Session = Depends(get_db)) -> dict:
+    ensure_web_prices(db, state=state)
+    return market_service.filters(db, state=state)
 
 
 @router.get("/market/prices", response_model=list[MarketPriceRead])
-def get_market_prices(
-    state: str | None = Query(default=None, min_length=2, max_length=120),
-    district: str | None = Query(default=None, min_length=2, max_length=120),
-    market: str | None = Query(default=None, min_length=2, max_length=160),
-    commodity: str = Query(default="Potato", min_length=2, max_length=80),
-    variety: str | None = Query(default=None, min_length=1, max_length=80),
-    grade: str | None = Query(default=None, min_length=1, max_length=40),
-    date_from: str | None = None,
-    date_to: str | None = None,
+def market_prices(
+    state: str | None = None,
+    district: str | None = None,
+    market: str | None = None,
+    variety: str | None = None,
+    grade: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     latest_only: bool = False,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0, le=10_000),
+    limit: int = Query(default=250, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list:
-    try:
-        payload = MarketPriceQuery(
-            state=state,
-            district=district,
-            market=market,
-            commodity=commodity,
-            variety=variety,
-            grade=grade,
-            date_from=date_from,
-            date_to=date_to,
-            latest_only=latest_only,
-            limit=limit,
-            offset=offset,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return market_service.list_prices(db, payload.model_dump())
-
-
-@router.get("/market/analytics", response_model=MarketAnalytics)
-def get_market_analytics(
-    state: str | None = Query(default=None, min_length=2, max_length=120),
-    district: str | None = Query(default=None, min_length=2, max_length=120),
-    market: str | None = Query(default=None, min_length=2, max_length=160),
-    commodity: str = Query(default="Potato", min_length=2, max_length=80),
-    variety: str | None = Query(default=None, min_length=1, max_length=80),
-    window_days: int = Query(default=30, ge=1, le=365),
-    db: Session = Depends(get_db),
-) -> dict:
-    return market_service.analytics(
+    ensure_web_prices(db, state=state)
+    return market_service.list_prices(
         db,
-        {
-            "state": state,
-            "district": district,
-            "market": market,
-            "commodity": commodity,
-            "variety": variety,
-            "window_days": window_days,
-        },
+        state=state,
+        district=district,
+        market=market,
+        variety=variety,
+        grade=grade,
+        date_from=date_from,
+        date_to=date_to,
+        latest_only=latest_only,
+        limit=limit,
+        offset=offset,
     )
 
 
-@router.post("/market/refresh", response_model=MarketSyncResponse)
-def refresh_market(
-    state: str = Query(default="Karnataka", min_length=2, max_length=120),
-    max_pages: int = Query(default=3, ge=1, le=5),
+@router.get("/market/consolidated", response_model=ConsolidatedMarketReport)
+def market_consolidated(
+    state: str | None = "Karnataka",
+    district: str | None = None,
     db: Session = Depends(get_db),
-    user: AuthenticatedUser = Depends(require_admin_user),
 ) -> dict:
-    enforce_rate_limit(f"market-refresh:{user.id}", limit=3, window_seconds=300)
+    ensure_web_prices(db, state=state)
+    return market_service.consolidated(db, state=state, district=district)
+
+
+@router.get("/market/analytics", response_model=MarketAnalytics)
+def market_analytics(
+    state: str = "Karnataka",
+    district: str | None = None,
+    market: str | None = None,
+    variety: str | None = None,
+    window_days: int = Query(default=90, ge=7, le=365),
+    db: Session = Depends(get_db),
+) -> dict:
+    ensure_web_prices(db, state=state)
+    return market_service.analytics(
+        db,
+        state=state,
+        district=district,
+        market=market,
+        variety=variety,
+        window_days=window_days,
+    )
+
+
+@router.get("/market/forecast", response_model=MarketForecastResponse)
+def market_forecast(
+    state: str = "Karnataka",
+    district: str | None = None,
+    market: str | None = None,
+    variety: str | None = None,
+    horizon_days: int = Query(default=30, ge=1, le=30),
+    db: Session = Depends(get_db),
+) -> dict:
+    ensure_web_prices(db, state=state)
     try:
-        return market_service.refresh_from_data_gov(db, state=state, max_pages=max_pages, triggered_by=user.id)
-    except httpx.HTTPError as exc:  # type: ignore[name-defined]
-        raise HTTPException(status_code=502, detail="Official market data request failed.") from exc
+        return market_service.forecast_detailed(
+            db, state=state, district=district, market=market, variety=variety, horizon_days=horizon_days
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/admin/market/directory/sync", response_model=MarketSyncResponse)
-def sync_market_directory(
-    state: str | None = Query(default=None, min_length=2, max_length=120),
+@router.get("/market/outlook", response_model=MarketOutlookResponse)
+def market_outlook(
+    state: str = "Karnataka",
+    district: str | None = None,
+    market: str | None = None,
+    variety: str | None = None,
+    horizon_days: int = Query(default=60, ge=31, le=90),
     db: Session = Depends(get_db),
-    user: AuthenticatedUser = Depends(require_admin_user),
 ) -> dict:
-    enforce_rate_limit(f"market-directory-sync:{user.id}", limit=5, window_seconds=300)
-    return market_service.sync_directory(db, state=state)
+    try:
+        return market_service.outlook(
+            db, state=state, district=district, market=market, variety=variety, horizon_days=horizon_days
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/admin/market/prices/refresh", response_model=MarketSyncResponse)
-def admin_refresh_market(
-    state: str = Query(default="Karnataka", min_length=2, max_length=120),
-    max_pages: int = Query(default=3, ge=1, le=5),
+@router.post("/market/refresh")
+def refresh_market(
+    state: str | None = "Karnataka", district: str | None = None,
+    max_pages: int | None = Query(default=None, ge=1, le=25), db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return sync_web_prices(db, state=state, district=district, force=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Webpage refresh failed; stored observations retained: {exc}") from exc
+
+def _resolve_user_ref(
+    x_user_ref: str | None,
+    authorization: str | None = None,
+    *,
+    required: bool = True,
+) -> str | None:
+    """Resolve demo identity locally or verify a Supabase access token in production mode."""
+    if settings.auth_mode.lower() != "supabase":
+        value = (x_user_ref or "").strip()
+        if not value and required:
+            raise HTTPException(status_code=401, detail="X-User-Ref header is required in demo auth mode")
+        return value[:160] if value else None
+
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise HTTPException(status_code=503, detail="Supabase authentication is selected but backend Supabase settings are incomplete")
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token:
+        if required:
+            raise HTTPException(status_code=401, detail="Bearer access token is required")
+        return None
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            response = client.get(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "apikey": settings.supabase_service_role_key,
+                },
+            )
+        if response.status_code != 200:
+            if required:
+                raise HTTPException(status_code=401, detail="Invalid or expired Supabase session")
+            return None
+        user_id = str((response.json() or {}).get("id") or "").strip()
+        if not user_id:
+            if required:
+                raise HTTPException(status_code=401, detail="Supabase session did not resolve a user")
+            return None
+        return user_id[:160]
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        if required:
+            raise HTTPException(status_code=503, detail="Could not verify Supabase session") from exc
+        return None
+
+
+@router.get("/marketplace/summary", response_model=MarketplaceSummary)
+def marketplace_summary(db: Session = Depends(get_db)) -> dict:
+    return marketplace_service.summary(db)
+
+
+@router.get("/marketplace/listings", response_model=ListingPage)
+def marketplace_listings(
+    listing_type: str | None = Query(default=None, pattern="^(BUY|SELL)$"),
+    state: str | None = None, district: str | None = None, variety: str | None = None, search: str | None = None,
+    sort: str = Query(default="newest", pattern="^(newest|price_low|price_high|quantity_high)$"),
+    only_owner: bool = False, favorites_only: bool = False, cursor: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    x_user_ref: str | None = Header(default=None, alias="X-User-Ref"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
-    user: AuthenticatedUser = Depends(require_admin_user),
 ) -> dict:
-    enforce_rate_limit(f"admin-market-refresh:{user.id}", limit=3, window_seconds=300)
-    return market_service.refresh_from_data_gov(db, state=state, max_pages=max_pages, triggered_by=user.id)
+    owner_ref = _resolve_user_ref(x_user_ref, authorization, required=False)
+    items, next_cursor = marketplace_service.list_listings(
+        db, owner_ref=owner_ref, listing_type=listing_type, state=state, district=district,
+        variety=variety, search=search, sort=sort, only_owner=only_owner, favorites_only=favorites_only,
+        cursor=cursor, limit=limit,
+    )
+    return {"items": items, "next_cursor": next_cursor, "total_returned": len(items)}
+
+
+@router.post("/marketplace/listings", response_model=ListingRead, status_code=status.HTTP_201_CREATED)
+def create_marketplace_listing(
+    payload: ListingCreate,
+    x_user_ref: str | None = Header(default=None, alias="X-User-Ref"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+) -> ListingRead:
+    user_ref = _resolve_user_ref(x_user_ref, authorization, required=True)
+    return marketplace_service.create_listing(db, payload, user_ref, idempotency_key)
+
+
+@router.patch("/marketplace/listings/{listing_id}", response_model=ListingRead)
+def update_marketplace_listing(
+    listing_id: int, payload: ListingUpdate,
+    x_user_ref: str | None = Header(default=None, alias="X-User-Ref"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> ListingRead:
+    user_ref = _resolve_user_ref(x_user_ref, authorization, required=True)
+    return marketplace_service.update_listing(db, listing_id, payload, user_ref)
+
+
+@router.post("/marketplace/listings/{listing_id}/favorite", response_model=FavoriteResponse)
+def favorite_marketplace_listing(
+    listing_id: int, x_user_ref: str | None = Header(default=None, alias="X-User-Ref"),
+    authorization: str | None = Header(default=None, alias="Authorization"), db: Session = Depends(get_db),
+) -> dict:
+    user_ref = _resolve_user_ref(x_user_ref, authorization, required=True)
+    return {"listing_id": listing_id, "favorite": marketplace_service.set_favorite(db, listing_id, user_ref, True)}
+
+
+@router.delete("/marketplace/listings/{listing_id}/favorite", response_model=FavoriteResponse)
+def unfavorite_marketplace_listing(
+    listing_id: int, x_user_ref: str | None = Header(default=None, alias="X-User-Ref"),
+    authorization: str | None = Header(default=None, alias="Authorization"), db: Session = Depends(get_db),
+) -> dict:
+    user_ref = _resolve_user_ref(x_user_ref, authorization, required=True)
+    return {"listing_id": listing_id, "favorite": marketplace_service.set_favorite(db, listing_id, user_ref, False)}
+
+
+@router.get("/marketplace/cold-storage", response_model=list[ColdStorageRead])
+def marketplace_cold_storage(
+    state: str | None = None, district: str | None = None, limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return marketplace_service.cold_storage(db, state=state, district=district, limit=limit)
+
+
+@router.get("/marketplace/transport", response_model=list[TransportProviderRead])
+def marketplace_transport(
+    state: str | None = None, district: str | None = None, limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return marketplace_service.transport(db, state=state, district=district, limit=limit)
+
+
+@router.post("/assistant/query", response_model=AssistantResponse)
+async def farmer_assistant_query(payload: AssistantQuery, db: Session = Depends(get_db)) -> dict:
+    return await farmer_assistant.answer(
+        db, message=payload.message, language=payload.language, batch_id=payload.batch_id,
+        state=payload.state, district=payload.district,
+    )
+
+
+@router.get("/news", response_model=NewsResponse)
+def potato_news(
+    category: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=24, ge=1, le=100),
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    return news_service.list(db, category=category, search=search, limit=limit, auto_refresh=refresh or True)
+
+
+@router.post("/news/refresh")
+def refresh_news(db: Session = Depends(get_db)) -> dict:
+    try:
+        return news_service.refresh(db)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Potato-news refresh failed: {exc}") from exc
+
+
+@router.get("/weather", response_model=WeatherResponse)
+def weather(
+    latitude: float = Query(ge=-90, le=90),
+    longitude: float = Query(ge=-180, le=180),
+    days: int = Query(default=5, ge=1, le=10),
+) -> dict:
+    try:
+        return weather_service.forecast(latitude, longitude, days)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Weather request failed: {exc}") from exc
+
+
+@router.post("/tools/storage-plan", response_model=StoragePlanResponse)
+def storage_plan(payload: StoragePlanRequest) -> dict:
+    return market_service.storage_plan(payload)
+
+
+@router.post("/tools/transport-plan", response_model=TransportPlanResponse)
+def transport_plan(payload: TransportPlanRequest) -> dict:
+    return market_service.transport_plan(payload)
 
 
 @router.get("/dashboard", response_model=DashboardSummary)
@@ -469,3 +729,11 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
         "grade_distribution": grade_distribution,
         "action_distribution": action_distribution,
     }
+
+
+# TUBERINTEL PUBLIC WEB PRICES V1
+from app.services.web_market_service import ensure_web_prices, sync as sync_web_prices, web_status
+
+@router.get("/market/web-status")
+def market_web_status() -> dict:
+    return web_status()

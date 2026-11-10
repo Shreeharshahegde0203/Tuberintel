@@ -18,6 +18,10 @@ The implementation follows the project report's end-to-end architecture:
 - A risk-adjusted recommendation engine that calculates revenue, transport, handling, storage, processing, expected loss, net operating profit and ROI for every pathway.
 - Exact decision-factor contribution decomposition plus standalone Grad-CAM and SHAP tooling.
 - Dashboard, batch history, market intelligence, model registry, JSON export and actual-outcome feedback.
+- Functional BUY/SELL marketplace with buyer requirements, seller lots, filters, favorites, idempotent posting, cursor pagination and quality-linked analyzed batches.
+- Tuber Mitra farmer assistant: works offline from a local potato knowledge base and can optionally use an LLM without changing the API.
+- Cold-storage and transport service directories with clearly labelled demonstration seeds until verified external sources are configured.
+- Calibrated/manual physical-size metadata; arbitrary image pixels are never presented as millimetres.
 - English/Kannada bilingual interface with persistent language selection, larger touch targets and PWA shell caching.
 - Responsive agricultural operations interface without decorative AI-dashboard styling.
 - PostgreSQL/Supabase-ready database and object-storage adapter, Alembic schema, Vercel frontend config and Render backend blueprint.
@@ -35,6 +39,10 @@ docs/                    architecture, deployment and research documentation
 ml/data/                 licensed-source registry, validation, manifest, deduplication and split tooling
 deployment/              nginx configuration
 ```
+
+## Start here
+
+For tomorrow's demo, read **`START_HERE.md`** first. On Windows, `setup_windows.bat` performs one-time dependency setup and tests; `run_windows.bat` launches both servers.
 
 ## Run locally
 
@@ -88,6 +96,17 @@ DATA_GOV_RESOURCE_ID=9ef84268-d588-465a-a308-a864a43d0070
 ```
 
 Without a key, the application stays fully usable using a clearly labelled seeded Karnataka demonstration series. It never presents seeded data as live data.
+
+## Configure the optional farmer-assistant LLM
+
+Tuber Mitra works without a key. To enhance generation while keeping retrieval grounding, set:
+
+```env
+OPENAI_API_KEY=your_key
+OPENAI_MODEL=gpt-5
+```
+
+Without a key or if the provider fails, the assistant falls back to its local grounded response path.
 
 ## Configure trained vision models
 
@@ -163,7 +182,7 @@ npm run lint
 npm run build
 ```
 
-The API integration test creates a temporary database, uploads the bundled demonstration image, runs the complete analysis, verifies all four commercial alternatives and submits outcome feedback.
+The API integration tests create a temporary database, upload the bundled demonstration image, run the complete analysis, verify all four commercial alternatives, exercise calibrated-size metadata, create a quality-linked trade post with idempotent retry, favorite it, query Tuber Mitra, and verify service discovery.
 
 ## Important accuracy statement
 
@@ -174,8 +193,27 @@ The software workflow is complete and executable. The repository does **not** sh
 
 See `docs/DEPLOYMENT.md`. The frontend is Vercel-ready. The recommended production backend is a persistent container with Supabase PostgreSQL/storage.
 
-For local or production Supabase wiring, see `docs/SUPABASE_SETUP.md`. The current app already supports:
+## Database-backed mandi directory
 
-- Supabase Auth in the frontend
-- Bearer-token verification in FastAPI
-- Optional Supabase Storage for uploaded images
+The market-location selectors do not embed APMC names in the frontend. They use:
+
+- `market_states`: canonical 28-state + 8-Union-Territory reference table;
+- `mandi_directory`: accumulated state/district/market directory discovered from the official AGMARKNET reporting feed;
+- `market_prices`: potato price observations used for tables, rankings, trends and forecasts;
+- `market_sync_runs`: auditable refresh history and errors.
+
+Relevant endpoints:
+
+```text
+GET  /api/v1/market/directory/states
+GET  /api/v1/market/directory/mandis?state=Karnataka
+POST /api/v1/market/directory/sync?state=Karnataka
+GET  /api/v1/market/prices?state=Karnataka&district=Kolar&market=Kolar%20APMC
+POST /api/v1/market/refresh?state=Karnataka
+```
+
+See `MANDI_DIRECTORY_V4_GUIDE.md` for the Desktop-based update commands and the data-source boundary between AGMARKNET reporting markets and future e-NAM-specific metadata.
+
+## V2 engineering notes
+
+See `docs/SYSTEM_DESIGN_V2.md` for the implemented system-design decisions and production scaling path, and `docs/RECOVERY_AND_SCOPE_V2.md` for what was recovered versus added in this rebuild.

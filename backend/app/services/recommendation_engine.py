@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from statistics import median
 from typing import Any
 
 from app.models import Batch, MarketPrice, QualityAssessment
 from app.schemas.batches import AnalysisOptions
-
-
-GRADE_FACTORS = {"A": 1.10, "B": 1.00, "C": 0.78, "D": 0.48}
+from app.services.quality_valuation import apply_valuation
 
 
 @dataclass
@@ -25,6 +24,9 @@ class Candidate:
     score: float
     costs: dict[str, float]
     reasons: list[str]
+    eligible: bool
+    assumption_status: str
+    price_source: str
 
     def public(self) -> dict[str, Any]:
         data = asdict(self)
@@ -33,11 +35,54 @@ class Candidate:
 
 
 class RecommendationEngine:
+    """Transparent post-harvest economics.
+
+    Financial values are derived only from explicit prices, quantity and explicit
+    post-harvest costs/loss assumptions. Vision outputs are kept as risk/context;
+    quality adjustment is applied separately with explicit, auditable assumptions.
+    """
+
     @staticmethod
     def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
         return max(low, min(high, value))
 
-    def evaluate(
+    @staticmethod
+    def _clean(value: str | None) -> str:
+        return (value or "").strip().casefold()
+
+    def _market_reference(
+        self,
+        batch: Batch,
+        latest_markets: list[MarketPrice],
+    ) -> tuple[float, str, str, bool]:
+        rows = [row for row in latest_markets if float(getattr(row, "modal_price", 0) or 0) > 0]
+        if not rows:
+            return 0.0, batch.intended_market or "Market unavailable", "No current market observation", False
+
+        intended = self._clean(batch.intended_market)
+        selected_rows = [row for row in rows if self._clean(getattr(row, "market", None)) == intended] if intended else []
+        reference_rows = selected_rows or rows
+
+        variety = self._clean(getattr(batch, "variety", None))
+        if variety and variety not in {"unspecified", "not specified", "local"}:
+            variety_rows = [row for row in reference_rows if self._clean(getattr(row, "variety", None)) == variety]
+            if variety_rows:
+                reference_rows = variety_rows
+
+        modal = float(median(float(row.modal_price) for row in reference_rows))
+        first = reference_rows[0]
+        market_name = str(getattr(first, "market", None) or batch.intended_market or "Market")
+        source = str(getattr(first, "source", None) or "AGMARKNET / market observation")
+        date_value = getattr(first, "arrival_date", None)
+        source_text = f"{source} modal price" + (f" · {date_value}" if date_value else "")
+        return modal, market_name, source_text, True
+
+    # TUBERINTEL QUALITY VALUE V1
+    def evaluate(self, batch, assessment, latest_markets, forecast, options):
+        result = self._evaluate_reference(batch, assessment, latest_markets, forecast, options)
+        return apply_valuation(result, assessment, batch, options)
+
+    def _evaluate_reference(
         self,
         batch: Batch,
         assessment: QualityAssessment,
@@ -46,261 +91,320 @@ class RecommendationEngine:
         options: AnalysisOptions,
     ) -> dict[str, Any]:
         is_kn = options.language == "kn"
-        quintals = batch.quantity_kg / 100.0
-        tonnes = batch.quantity_kg / 1000.0
-        grade_factor = GRADE_FACTORS.get(assessment.quality_grade, 0.72)
-        best_market = max(latest_markets, key=lambda p: p.modal_price) if latest_markets else None
-        base_modal = best_market.modal_price if best_market else 2000.0
-        best_market_name = best_market.market if best_market else (batch.intended_market or ("ಹತ್ತಿರದ ಸ್ಥಳೀಯ ಮಂಡಿ" if is_kn else "Nearest local mandi"))
+        quintals = float(batch.quantity_kg) / 100.0
+        tonnes = float(batch.quantity_kg) / 1000.0
+        base_modal, market_name, market_source, market_available = self._market_reference(batch, latest_markets)
 
-        transport = options.distance_km * tonnes * options.transport_cost_per_km_tonne
-        handling = quintals * options.handling_cost_per_quintal
-        acceptance = 1.0 - assessment.rejection_probability / 100.0
-        sell_price = base_modal * grade_factor
+        transport = float(options.distance_km) * tonnes * float(options.transport_cost_per_km_tonne)
+        handling = quintals * float(options.handling_cost_per_quintal)
+        storage_loss = getattr(options, "expected_storage_loss_percent", None)
+        if storage_loss is not None:
+            storage_loss = self._clamp(float(storage_loss), 0.0, 100.0)
 
         candidates: list[Candidate] = []
 
-        # SELL NOW
-        sell_risk = self._clamp(
-            assessment.rejection_probability * 0.55
-            + assessment.surface_defect_severity * 0.15
-            + (12 if assessment.quality_grade == "D" else 0)
-        )
-        sell_gross = sell_price * quintals * acceptance
-        sell_costs = {"transport": transport, "handling": handling, "storage": 0.0, "processing": 0.0, "expected_loss": sell_gross * sell_risk / 100 * 0.12}
-        sell_total_cost = sum(sell_costs.values())
-        sell_net = sell_gross - sell_total_cost
-        candidates.append(
-            self._candidate(
-                "SELL_NOW",
-                "ಈಗಲೇ ಮಾರಾಟ ಮಾಡಿ" if is_kn else "Sell now",
-                best_market_name,
-                "24–48 ಗಂಟೆಗಳೊಳಗೆ" if is_kn else "Within 24–48 hours",
-                sell_price,
-                sell_gross,
-                sell_net,
-                sell_total_cost,
-                sell_risk,
-                assessment.confidence,
-                sell_costs,
-                [
-                    (f"ಪ್ರಸ್ತುತ ಅತ್ಯುತ್ತಮ ಮಾದರಿ ಬೆಲೆ ಪ್ರತಿ ಕ್ವಿಂಟಲ್‌ಗೆ ಸುಮಾರು ₹{base_modal:,.0f}." if is_kn else f"Current best modal price is approximately ₹{base_modal:,.0f} per quintal."),
-                    (f"ಗ್ರೇಡ್ {assessment.quality_grade} ಗೆ {grade_factor:.2f} ವಾಣಿಜ್ಯ ಗುಣಮಟ್ಟ ಗುಣಕ ಅನ್ವಯಿಸಲಾಗಿದೆ." if is_kn else f"Grade {assessment.quality_grade} applies a commercial quality factor of {grade_factor:.2f}."),
-                    ("ತಕ್ಷಣದ ಮಾರಾಟವು ಸಂಗ್ರಹಣೆಯ ಗುಣಮಟ್ಟ ಕುಸಿತ ಮತ್ತು ಬೆಲೆ ಅನಿಶ್ಚಿತತೆಯನ್ನು ತಪ್ಪಿಸುತ್ತದೆ." if is_kn else "Immediate sale avoids storage deterioration and price uncertainty."),
-                ],
-            )
-        )
-
-        # STORE AND SELL
-        storage_days = options.storage_days
-        forecast_index = min(max(storage_days - 1, 0), len(forecast) - 1) if forecast else 0
-        future_base = forecast[forecast_index]["predicted_price"] if forecast else base_modal * 1.04
-        stored_price = future_base * grade_factor
-        storage_cost = options.storage_cost_per_quintal_day * quintals * storage_days
-        storage_sensitivity = (
-            assessment.sprout_severity * 0.30
-            + assessment.bruise_severity * 0.22
-            + assessment.scab_severity * 0.16
-            + assessment.discoloration_severity * 0.12
-            + max(0.0, 75 - assessment.quality_score) * 0.25
-        )
-        storage_risk = self._clamp(10 + storage_sensitivity + storage_days * 0.55)
-        stored_acceptance = max(0.35, acceptance - storage_risk / 100 * 0.18)
-        store_gross = stored_price * quintals * stored_acceptance
-        store_costs = {
-            "transport": transport,
-            "handling": handling * 1.15,
-            "storage": storage_cost,
-            "processing": 0.0,
-            "expected_loss": store_gross * storage_risk / 100 * 0.19,
-        }
-        store_total = sum(store_costs.values())
-        store_net = store_gross - store_total
-        candidates.append(
-            self._candidate(
-                "STORE",
-                "ಸಂಗ್ರಹಿಸಿ ನಂತರ ಮಾರಾಟ ಮಾಡಿ" if is_kn else "Store and sell later",
-                best_market_name,
-                (f"ಸುಮಾರು {storage_days} ದಿನಗಳ ನಂತರ" if is_kn else f"After approximately {storage_days} days"),
-                stored_price,
-                store_gross,
-                store_net,
-                store_total,
-                storage_risk,
-                min(assessment.confidence, 78.0),
-                store_costs,
-                [
-                    (f"ಗ್ರೇಡ್ ಹೊಂದಾಣಿಕೆಯ ಮೊದಲು {storage_days} ದಿನಗಳ ಅಂದಾಜು ಬೆಲೆ ಪ್ರತಿ ಕ್ವಿಂಟಲ್‌ಗೆ ಸುಮಾರು ₹{future_base:,.0f}." if is_kn else f"The {storage_days}-day forecast is approximately ₹{future_base:,.0f} per quintal before grade adjustment."),
-                    (f"ಈ ಲಾಟ್‌ನ ಅಂದಾಜು ಸಂಗ್ರಹ ವೆಚ್ಚ ₹{storage_cost:,.0f}." if is_kn else f"Estimated storage expense is ₹{storage_cost:,.0f} for this batch."),
-                    (f"ದೃಶ್ಯ ಗುಣಮಟ್ಟ ಲಕ್ಷಣಗಳಿಂದ ಸಂಗ್ರಹ ಅಪಾಯ ಅಂಕ {storage_risk:.1f}/100 ಬಂದಿದೆ." if is_kn else f"Visible quality features produce a storage-risk score of {storage_risk:.1f}/100."),
-                ],
-            )
-        )
-
-        # PROCESS
-        processor_base = options.processor_price_per_quintal or base_modal * 0.79
-        # Processors tolerate cosmetic defects but penalize rot/greening and severe rejection risk.
-        processor_quality_factor = max(0.60, 0.92 - assessment.discoloration_severity / 300 - assessment.sprout_severity / 500)
-        process_price = processor_base * processor_quality_factor
-        process_acceptance = max(0.62, 1.0 - assessment.rejection_probability / 180)
-        process_gross = process_price * quintals * process_acceptance
-        processing_logistics = handling * 1.35
-        process_risk = self._clamp(16 + assessment.discoloration_severity * 0.22 + assessment.rejection_probability * 0.28)
-        process_costs = {
-            "transport": transport * 0.92,
-            "handling": processing_logistics,
+        # SELL NOW: AGMARKNET/market modal price is a wholesale reference. Do not
+        # invent a grade multiplier or convert visual rejection risk into rupees.
+        sell_gross = base_modal * quintals if market_available else 0.0
+        sell_costs = {
+            "transport": transport if market_available else 0.0,
+            "handling": handling if market_available else 0.0,
             "storage": 0.0,
-            "processing": quintals * 18.0,
-            "expected_loss": process_gross * process_risk / 100 * 0.08,
-        }
-        process_total = sum(process_costs.values())
-        process_net = process_gross - process_total
-        candidates.append(
-            self._candidate(
-                "PROCESS",
-                "ಸಂಸ್ಕರಣೆಗೆ ಕಳುಹಿಸಿ" if is_kn else "Redirect to processing",
-                "ಪರಿಶೀಲಿತ ಚಿಪ್ಸ್ / ಸ್ಟಾರ್ಚ್ / ಸಂಸ್ಕರಣಾ ಖರೀದಿದಾರ" if is_kn else "Verified chips / starch / processing buyer",
-                "2–4 ದಿನಗಳೊಳಗೆ ರವಾನೆ" if is_kn else "Dispatch within 2–4 days",
-                process_price,
-                process_gross,
-                process_net,
-                process_total,
-                process_risk,
-                min(assessment.confidence + 2, 91),
-                process_costs,
-                [
-                    ("ಸಂಸ್ಕರಣಾ ಖರೀದಿದಾರರು ತಾಜಾ ಮಾರುಕಟ್ಟೆ ಮೌಲ್ಯ ಕಡಿಮೆ ಮಾಡುವ ಮೇಲ್ಮೈ ದೋಷಗಳನ್ನು ಕೆಲವು ಮಟ್ಟಿಗೆ ಸ್ವೀಕರಿಸಬಹುದು." if is_kn else "Processing buyers can accept cosmetic defects that reduce fresh-market value."),
-                    (f"ಅಂದಾಜು ಸಂಸ್ಕರಣಾ ಮೌಲ್ಯ ಪ್ರತಿ ಕ್ವಿಂಟಲ್‌ಗೆ ₹{process_price:,.0f}." if is_kn else f"Estimated processor realization is ₹{process_price:,.0f} per quintal."),
-                    ("ಈ ಆಯ್ಕೆ ತಾಜಾ ಮಾರುಕಟ್ಟೆಯ ತಿರಸ್ಕಾರ ಅಪಾಯವನ್ನು ಕಡಿಮೆ ಮಾಡಿ ವಾಣಿಜ್ಯ ಬಳಕೆಯನ್ನು ಉಳಿಸುತ್ತದೆ." if is_kn else "The option limits fresh-market rejection exposure while preserving commercial utilization."),
-                ],
-            )
-        )
-
-        # WAIT / DELAYED RELEASE
-        wait_days = min(7, max(3, storage_days // 2))
-        wait_index = min(wait_days - 1, len(forecast) - 1) if forecast else 0
-        wait_base = forecast[wait_index]["predicted_price"] if forecast else base_modal * 1.015
-        wait_price = wait_base * grade_factor
-        wait_risk = self._clamp(
-            18
-            + assessment.surface_defect_severity * 0.27
-            + assessment.rejection_probability * 0.25
-            + wait_days * 0.8
-        )
-        wait_acceptance = max(0.42, acceptance - wait_risk / 100 * 0.13)
-        wait_gross = wait_price * quintals * wait_acceptance
-        wait_costs = {
-            "transport": transport,
-            "handling": handling,
-            "storage": options.storage_cost_per_quintal_day * quintals * wait_days * 0.45,
             "processing": 0.0,
-            "expected_loss": wait_gross * wait_risk / 100 * 0.16,
+            "expected_loss": 0.0,
         }
-        wait_total = sum(wait_costs.values())
-        wait_net = wait_gross - wait_total
+        sell_net = sell_gross - sum(sell_costs.values())
+        sell_risk = self._clamp(
+            float(assessment.rejection_probability) * 0.60
+            + float(assessment.surface_defect_severity) * 0.40
+        )
         candidates.append(
             self._candidate(
-                "WAIT",
-                "ಮಾರುಕಟ್ಟೆ ಬಿಡುಗಡೆ ತಡಮಾಡಿ" if is_kn else "Delay market release",
-                best_market_name,
-                (f"{wait_days} ದಿನಗಳ ನಂತರ ಮಾರುಕಟ್ಟೆ ಮರುಪರಿಶೀಲಿಸಿ" if is_kn else f"Review market in {wait_days} days"),
-                wait_price,
-                wait_gross,
-                wait_net,
-                wait_total,
-                wait_risk,
-                min(assessment.confidence, 74.0),
-                wait_costs,
-                [
-                    (f"ಸಮೀಪಕಾಲದ ಅಂದಾಜಿನಲ್ಲಿ ಪ್ರತಿ ಕ್ವಿಂಟಲ್‌ಗೆ ಸುಮಾರು ₹{wait_base:,.0f} ಮಾದರಿ ಬೆಲೆ ಸಾಧ್ಯತೆ ಇದೆ." if is_kn else f"Near-term forecast indicates a possible modal price near ₹{wait_base:,.0f} per quintal."),
-                    ("ಲಾಟ್ ಅನ್ನು ತಂಪಾಗಿ, ಒಣವಾಗಿ ಮತ್ತು ಗಾಳಿಯಾಡುವಂತೆ ಇಡಲು ಸಾಧ್ಯವಾದಾಗ ಮಾತ್ರ ತಡಮಾಡುವುದು ಸೂಕ್ತ." if is_kn else "Delay is only suitable when the batch can be kept cool, dry and ventilated."),
-                    (f"ಅಂದಾಜು ಹಿಡುವಳಿ ಅಪಾಯ {wait_risk:.1f}/100." if is_kn else f"The estimated holding risk is {wait_risk:.1f}/100."),
+                action="SELL_NOW",
+                title="ಈಗಲೇ ಮಾರಾಟ ಮಾಡಿ" if is_kn else "Sell now",
+                market=market_name,
+                timing="24–48 ಗಂಟೆಗಳೊಳಗೆ" if is_kn else "Within 24–48 hours",
+                selling_price=base_modal,
+                gross=sell_gross,
+                net=sell_net,
+                risk=sell_risk,
+                confidence=float(assessment.confidence),
+                costs=sell_costs,
+                reasons=[
+                    (
+                        f"{batch.quantity_kg:,.0f} kg = {quintals:,.2f} ಕ್ವಿಂಟಲ್; ಉಲ್ಲೇಖ ಒಟ್ಟು ಮೌಲ್ಯ = {quintals:,.2f} × ₹{base_modal:,.0f} = ₹{sell_gross:,.0f}."
+                        if is_kn
+                        else f"{batch.quantity_kg:,.0f} kg = {quintals:,.2f} quintals; reference gross value = {quintals:,.2f} × ₹{base_modal:,.0f}/qtl = ₹{sell_gross:,.0f}."
+                    ),
+                    (
+                        "ಚಿತ್ರ ಗ್ರೇಡ್ ಅಥವಾ ತಿರಸ್ಕಾರ ಅಂಕದಿಂದ ಯಾವುದೇ ಸ್ವಯಂಚಾಲಿತ ರೂಪಿ ಕಡಿತ ಅನ್ವಯಿಸಲಾಗಿಲ್ಲ; ನಿಜವಾದ ಖರೀದಿದಾರರ ಕಡಿತ ವೇಳಾಪಟ್ಟಿ ಇಲ್ಲದೆ ಅದನ್ನು ಊಹಿಸಲಾಗುವುದಿಲ್ಲ."
+                        if is_kn
+                        else "No automatic rupee discount is applied from the vision grade or rejection score; a buyer-specific deduction schedule is required for that."
+                    ),
+                    (
+                        "ಮಂಡಿ modal ಬೆಲೆ ಒಂದು wholesale reference; ನಿಜವಾದ ಲಾಟ್ ಬೆಲೆ ಮಾತುಕತೆ, variety, grade ಮತ್ತು buyer inspection ಆಧರಿಸಿ ಬದಲಾಗಬಹುದು."
+                        if is_kn
+                        else "The mandi modal price is a wholesale reference; the actual lot price can differ after negotiation, variety/grade checks and buyer inspection."
+                    ),
                 ],
+                eligible=market_available,
+                assumption_status="Current market price available" if market_available else "Current market price required",
+                price_source=market_source,
             )
         )
 
-        # Quality-linked commercial constraints from the report's decision matrix.
-        for c in candidates:
-            if assessment.quality_grade == "D" and c.action in {"STORE", "WAIT"}:
-                c.score -= abs(c.net_profit) * 0.30 + 1800
-                c.reasons.append("ಕಡಿಮೆ ಗ್ರೇಡ್ ಲಾಟ್‌ನಲ್ಲಿ ಗುಣಮಟ್ಟ ಕುಸಿತದ ಅಪಾಯ ಹೆಚ್ಚು ಇರುವುದರಿಂದ ಸಂಗ್ರಹಣೆ ಕಡಿಮೆ ಅಂಕ ಪಡೆಯುತ್ತದೆ." if is_kn else "Low-grade storage is penalized because deterioration risk is high.")
-            if assessment.quality_grade == "C" and c.action == "PROCESS":
-                c.score += 650
-                c.reasons.append("ವರದಿ ನಿರ್ಧಾರ ಮ್ಯಾಟ್ರಿಕ್ಸ್‌ನಲ್ಲಿ ಗ್ರೇಡ್ C ಸಂಸ್ಕರಣಾ ಬಳಕೆಗೆ ಹೊಂದಿಕೊಳ್ಳುತ್ತದೆ." if is_kn else "Grade C aligns with stable processor utilization in the report decision matrix.")
-            if assessment.quality_grade == "A" and c.action == "SELL_NOW":
-                c.score += 900
-                c.reasons.append("ಉತ್ತಮ ತಾಜಾ ಮಾರುಕಟ್ಟೆಯಲ್ಲಿ ಪ್ರೀಮಿಯಂ ಗುಣಮಟ್ಟಕ್ಕೆ ಹೆಚ್ಚಿನ ಮೌಲ್ಯ ದೊರೆಯುತ್ತದೆ." if is_kn else "Premium quality is rewarded in a strong fresh market.")
-            if assessment.sprout_severity > 28 and c.action in {"STORE", "WAIT"}:
-                c.score -= 1200
-                c.reasons.append("ಮೊಳಕೆ ಸೂಚನೆಗಳು ತಡವಾದ ಮಾರಾಟವನ್ನು ಕಡಿಮೆ ಸೂಕ್ತವಾಗಿಸುತ್ತವೆ." if is_kn else "Sprout indicators make delayed sale less suitable.")
+        # STORE: use the selected-market forecast and a USER-SUPPLIED expected
+        # marketable weight loss. Without that assumption the route is shown but
+        # is not allowed to win the ranking.
+        storage_days = int(options.storage_days)
+        forecast_index = min(max(storage_days - 1, 0), len(forecast) - 1) if forecast else 0
+        future_base = float(forecast[forecast_index]["predicted_price"]) if forecast else base_modal
+        store_gross = future_base * quintals if market_available else 0.0
+        storage_cost = float(options.storage_cost_per_quintal_day) * quintals * storage_days
+        store_loss_value = store_gross * (storage_loss or 0.0) / 100.0
+        store_costs = {
+            "transport": transport if market_available else 0.0,
+            "handling": handling if market_available else 0.0,
+            "storage": storage_cost if market_available else 0.0,
+            "processing": 0.0,
+            "expected_loss": store_loss_value,
+        }
+        store_net = store_gross - sum(store_costs.values())
+        storage_risk = self._clamp(
+            12
+            + float(assessment.sprout_severity) * 0.30
+            + float(assessment.bruise_severity) * 0.18
+            + float(assessment.scab_severity) * 0.12
+            + float(assessment.discoloration_severity) * 0.12
+            + storage_days * 0.45
+        )
+        store_eligible = market_available and storage_days > 0 and storage_loss is not None
+        candidates.append(
+            self._candidate(
+                action="STORE",
+                title="ಸಂಗ್ರಹಿಸಿ ನಂತರ ಮಾರಾಟ ಮಾಡಿ" if is_kn else "Store and sell later",
+                market=market_name,
+                timing=f"ಸುಮಾರು {storage_days} ದಿನಗಳ ನಂತರ" if is_kn else f"After approximately {storage_days} days",
+                selling_price=future_base,
+                gross=store_gross,
+                net=store_net,
+                risk=storage_risk,
+                confidence=min(float(assessment.confidence), 78.0),
+                costs=store_costs,
+                reasons=[
+                    (
+                        f"{storage_days}-ದಿನಗಳ forecast reference ₹{future_base:,.0f}/ಕ್ವಿಂಟಲ್."
+                        if is_kn
+                        else f"The {storage_days}-day selected-market forecast reference is ₹{future_base:,.0f}/qtl."
+                    ),
+                    (
+                        f"ಬಳಕೆದಾರ ನೀಡಿದ ಸಂಗ್ರಹ ನಷ್ಟ {storage_loss:.1f}% ಅನ್ನು ₹{store_loss_value:,.0f} physical-loss value ಆಗಿ ಲೆಕ್ಕಿಸಲಾಗಿದೆ."
+                        if is_kn and storage_loss is not None
+                        else f"User-supplied storage loss of {storage_loss:.1f}% is valued at ₹{store_loss_value:,.0f}."
+                        if storage_loss is not None
+                        else "Storage/Wait is not ranked until you provide expected marketable weight loss (%) for the selected storage horizon."
+                    ),
+                    (
+                        "Vision storage risk is advisory only; it is not silently converted into kilograms or rupees."
+                        if not is_kn
+                        else "Vision storage risk ಸಲಹೆಗಾಗಿ ಮಾತ್ರ; ಅದನ್ನು ಗುಪ್ತವಾಗಿ kg ಅಥವಾ ರೂಪಾಯಿಗೆ ಪರಿವರ್ತಿಸಲಾಗುವುದಿಲ್ಲ."
+                    ),
+                ],
+                eligible=store_eligible,
+                assumption_status="Storage loss supplied" if store_eligible else "Storage loss % required to rank STORE",
+                price_source="Selected-market forecast" if forecast else market_source,
+            )
+        )
 
-        ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
-        winner = ranked[0]
-        margin = winner.score - ranked[1].score if len(ranked) > 1 else 0
-        confidence = self._clamp(58 + min(abs(margin) / 120, 22) + assessment.confidence * 0.16, 55, 94)
+        # PROCESS means SALE OF RAW POTATOES TO A PROCESSOR, not farmer-side
+        # value addition. Therefore it must use an explicit processor quote.
+        processor_quote = options.processor_price_per_quintal
+        process_eligible = processor_quote is not None and float(processor_quote) > 0
+        process_price = float(processor_quote) if process_eligible else 0.0
+        process_gross = process_price * quintals if process_eligible else 0.0
+        process_costs = {
+            "transport": transport if process_eligible else 0.0,
+            "handling": handling if process_eligible else 0.0,
+            "storage": 0.0,
+            "processing": 0.0,
+            "expected_loss": 0.0,
+        }
+        process_net = process_gross - sum(process_costs.values())
+        process_risk = self._clamp(
+            22
+            + float(assessment.discoloration_severity) * 0.18
+            + float(assessment.sprout_severity) * 0.16
+            + float(assessment.rejection_probability) * 0.18
+        )
+        candidates.append(
+            self._candidate(
+                action="PROCESS",
+                title="ಸಂಸ್ಕರಣಾ ಖರೀದಿದಾರರಿಗೆ ಮಾರಾಟ" if is_kn else "Sell to a processor",
+                market="Processor / contract buyer",
+                timing="Quote/contract ಪ್ರಕಾರ" if is_kn else "According to buyer quote / contract",
+                selling_price=process_price,
+                gross=process_gross,
+                net=process_net,
+                risk=process_risk,
+                confidence=min(float(assessment.confidence), 80.0) if process_eligible else 0.0,
+                costs=process_costs,
+                reasons=[
+                    (
+                        f"Processor quote ₹{process_price:,.0f}/ಕ್ವಿಂಟಲ್ ಅನ್ನು ನೇರವಾಗಿ {quintals:,.2f} ಕ್ವಿಂಟಲ್‌ಗೆ ಅನ್ವಯಿಸಲಾಗಿದೆ."
+                        if is_kn and process_eligible
+                        else f"The entered processor quote of ₹{process_price:,.0f}/qtl is applied directly to {quintals:,.2f} quintals."
+                        if process_eligible
+                        else "PROCESS is not ranked because no processor quote was supplied. TuberIntel does not invent a processor price."
+                    ),
+                    (
+                        "This route means selling raw potatoes to a processor; it does not assume that the farmer earns the value of chips/fries/starch."
+                        if not is_kn
+                        else "ಈ ಮಾರ್ಗವು ಕಚ್ಚಾ ಆಲೂಗಡ್ಡೆಯನ್ನು processor ಗೆ ಮಾರಾಟ ಮಾಡುವುದಾಗಿದೆ; chips/fries/starch ಮೌಲ್ಯವನ್ನು ರೈತರಿಗೆ ಸೇರಿಸಲಾಗುವುದಿಲ್ಲ."
+                    ),
+                    (
+                        "Processor acceptance can depend on variety, dry matter, reducing sugars and contract specifications that image inspection alone cannot verify."
+                        if not is_kn
+                        else "Processor acceptance variety, dry matter, reducing sugars ಮತ್ತು contract specifications ಮೇಲೆ ಅವಲಂಬಿಸಬಹುದು; ಚಿತ್ರ ಪರಿಶೀಲನೆ ಮಾತ್ರ ಇದನ್ನು ದೃಢಪಡಿಸಲಾರದು."
+                    ),
+                ],
+                eligible=process_eligible,
+                assumption_status="Processor quote supplied" if process_eligible else "Processor quote required to rank PROCESS",
+                price_source="User-entered processor quote" if process_eligible else "No processor quote",
+            )
+        )
 
-        # Exact, auditable contribution decomposition for the selected pathway.
-        # For the deterministic engine these are preferable to approximate SHAP values;
-        # the ML folder also contains SHAP tooling for a learned recommendation model.
-        benchmark_profit = float(sum(c.net_profit for c in ranked) / len(ranked))
+        # WAIT: short holding scenario. Apply the same explicit storage-loss
+        # assumption proportionally to the shorter holding period.
+        wait_days = min(7, max(1, storage_days // 2 if storage_days else 3))
+        wait_index = min(wait_days - 1, len(forecast) - 1) if forecast else 0
+        wait_price = float(forecast[wait_index]["predicted_price"]) if forecast else base_modal
+        wait_gross = wait_price * quintals if market_available else 0.0
+        if storage_loss is not None and storage_days > 0:
+            wait_loss_pct = storage_loss * wait_days / storage_days
+        else:
+            wait_loss_pct = storage_loss or 0.0
+        wait_loss_value = wait_gross * wait_loss_pct / 100.0
+        wait_storage_cost = float(options.storage_cost_per_quintal_day) * quintals * wait_days
+        wait_costs = {
+            "transport": transport if market_available else 0.0,
+            "handling": handling if market_available else 0.0,
+            "storage": wait_storage_cost if market_available else 0.0,
+            "processing": 0.0,
+            "expected_loss": wait_loss_value,
+        }
+        wait_net = wait_gross - sum(wait_costs.values())
+        wait_risk = self._clamp(
+            15
+            + float(assessment.surface_defect_severity) * 0.20
+            + float(assessment.rejection_probability) * 0.20
+            + wait_days * 0.55
+        )
+        wait_eligible = market_available and storage_loss is not None
+        candidates.append(
+            self._candidate(
+                action="WAIT",
+                title="ಮಾರುಕಟ್ಟೆ ಬಿಡುಗಡೆ ತಡಮಾಡಿ" if is_kn else "Delay market release",
+                market=market_name,
+                timing=f"{wait_days} ದಿನಗಳಲ್ಲಿ ಮರುಪರಿಶೀಲಿಸಿ" if is_kn else f"Review market in {wait_days} days",
+                selling_price=wait_price,
+                gross=wait_gross,
+                net=wait_net,
+                risk=wait_risk,
+                confidence=min(float(assessment.confidence), 74.0),
+                costs=wait_costs,
+                reasons=[
+                    (
+                        f"{wait_days}-ದಿನಗಳ forecast reference ₹{wait_price:,.0f}/ಕ್ವಿಂಟಲ್."
+                        if is_kn
+                        else f"The {wait_days}-day selected-market forecast reference is ₹{wait_price:,.0f}/qtl."
+                    ),
+                    (
+                        f"Short-hold loss uses {wait_loss_pct:.2f}% by prorating the user-supplied {storage_loss:.2f}% loss assumption over {storage_days} days."
+                        if storage_loss is not None and storage_days > 0 and not is_kn
+                        else "WAIT is not ranked until an expected storage/holding loss (%) is supplied."
+                        if storage_loss is None and not is_kn
+                        else f"ಬಳಕೆದಾರರ loss assumption ಆಧರಿಸಿ short-hold loss {wait_loss_pct:.2f}% ಬಳಸಲಾಗಿದೆ."
+                    ),
+                ],
+                eligible=wait_eligible,
+                assumption_status="Holding loss supplied" if wait_eligible else "Storage loss % required to rank WAIT",
+                price_source="Selected-market forecast" if forecast else market_source,
+            )
+        )
+
+        eligible = [candidate for candidate in candidates if candidate.eligible]
+        if eligible:
+            eligible_sorted = sorted(eligible, key=lambda c: (c.net_profit, -c.risk_score), reverse=True)
+            winner = eligible_sorted[0]
+        else:
+            # Keep the response contract stable, but make the lack of usable
+            # commercial evidence explicit rather than fabricating a price.
+            winner = candidates[0]
+
+        ranked = sorted(
+            candidates,
+            key=lambda c: (1 if c.eligible else 0, c.net_profit if c.eligible else -1e18, -c.risk_score),
+            reverse=True,
+        )
+
+        data_completeness = 35.0 if market_available else 0.0
+        if winner.action in {"STORE", "WAIT"} and storage_loss is not None:
+            data_completeness += 15.0
+        elif winner.action == "PROCESS" and process_eligible:
+            data_completeness += 15.0
+        else:
+            data_completeness += 10.0
+        confidence = self._clamp(float(assessment.confidence) * 0.45 + data_completeness, 0, 90)
+
         decision_factors = [
             {
-                "factor": "Expected operating profit",
-                "value": round(winner.net_profit, 2),
-                "contribution": round(winner.net_profit - benchmark_profit, 2),
-                "direction": "positive" if winner.net_profit >= benchmark_profit else "negative",
-                "explanation": "Difference between this pathway and the average net profit of all evaluated pathways.",
-            },
-            {
-                "factor": "Quality grade adjustment",
-                "value": assessment.quality_grade,
-                "contribution": round((grade_factor - 1.0) * base_modal * quintals, 2),
-                "direction": "positive" if grade_factor >= 1.0 else "negative",
-                "explanation": f"Grade {assessment.quality_grade} changes the market price factor to {grade_factor:.2f}.",
-            },
-            {
-                "factor": "Rejection exposure",
-                "value": round(assessment.rejection_probability, 2),
-                "contribution": round(-winner.gross_revenue * assessment.rejection_probability / 100 * 0.10, 2),
-                "direction": "negative",
-                "explanation": "Higher visual rejection probability reduces expected sale realization.",
-            },
-            {
-                "factor": "Risk penalty",
-                "value": round(winner.risk_score, 2),
-                "contribution": round(-(max(0.0, winner.net_profit) * winner.risk_score / 100 * 0.34 + winner.risk_score * 12), 2),
-                "direction": "negative",
-                "explanation": "Commercial uncertainty, deterioration and pathway-specific failure risk are penalized.",
-            },
-            {
-                "factor": "Market price signal",
-                "value": round(base_modal, 2),
-                "contribution": round((base_modal - 2000.0) * quintals * 0.25, 2),
-                "direction": "positive" if base_modal >= 2000 else "negative",
-                "explanation": "Contribution relative to the conservative ₹2,000/q reference price.",
-            },
+                "factor": "Reference gross value",
+                "value": round(winner.gross_revenue, 2),
+                "contribution": round(winner.gross_revenue, 2),
+                "direction": "positive",
+                "explanation": f"{quintals:.2f} quintals × ₹{winner.selling_price:,.2f}/qtl.",
+            }
         ]
+        factor_names = {
+            "transport": "Transport cost",
+            "handling": "Handling cost",
+            "storage": "Storage/holding cost",
+            "processing": "Processing cost",
+            "expected_loss": "User-assumed physical loss value",
+        }
+        for key, amount in winner.costs.items():
+            if amount <= 0:
+                continue
+            decision_factors.append(
+                {
+                    "factor": factor_names.get(key, key.replace("_", " ").title()),
+                    "value": round(amount, 2),
+                    "contribution": round(-amount, 2),
+                    "direction": "negative",
+                    "explanation": "Explicit post-harvest cost/assumption used in the arithmetic.",
+                }
+            )
 
         explanation = list(winner.reasons)
         explanation.extend(
             [
-                (f"{len(ranked)} ಮಾರ್ಗಗಳಲ್ಲಿ ಆಯ್ದ ಆಯ್ಕೆಗೆ ಅತ್ಯಧಿಕ ಅಪಾಯ-ಹೊಂದಿಸಿದ ಆರ್ಥಿಕ ಅಂಕ ಬಂದಿದೆ." if is_kn else f"The selected option has the highest risk-adjusted economic score among {len(ranked)} pathways."),
-                (f"ನಿರೀಕ್ಷಿತ ಕೊಯ್ಲಿನ ನಂತರದ ಕಾರ್ಯಾಚರಣಾ ಲಾಭ ₹{winner.net_profit:,.0f}; ಈಗಾಗಲೇ ಖರ್ಚಾದ ಬೆಳೆ ವೆಚ್ಚ ಇದರಲ್ಲಿ ಸೇರಿಲ್ಲ." if is_kn else f"Expected post-harvest operating profit is ₹{winner.net_profit:,.0f}; this excludes cultivation cost already incurred."),
-                (f"ಚಿತ್ರ ಗುಣಮಟ್ಟ ಅಂಕ {assessment.quality_score:.1f}/100 ಮತ್ತು ತಿರಸ್ಕಾರ ಸಾಧ್ಯತೆ {assessment.rejection_probability:.1f}% ಅನ್ನು ಲೆಕ್ಕದಲ್ಲಿ ಸೇರಿಸಲಾಗಿದೆ." if is_kn else f"Image quality score {assessment.quality_score:.1f}/100 and rejection probability {assessment.rejection_probability:.1f}% were included."),
+                (
+                    f"ಕೊಯ್ಲಿನ ನಂತರದ ನಿವ್ವಳ ಸಾಕಾರ ಮೌಲ್ಯ ₹{winner.net_profit:,.0f}; ಇದು reference gross value ನಿಂದ explicit post-harvest costs ಅನ್ನು ಕಡಿತ ಮಾಡಿದ ಮೌಲ್ಯ."
+                    if is_kn
+                    else f"Post-harvest net realization is ₹{winner.net_profit:,.0f}: reference/quoted gross value minus explicit post-harvest costs."
+                ),
+                (
+                    "ಬೆಳೆ ಬೆಳೆಸುವ ಈಗಾಗಲೇ ಉಂಟಾದ ವೆಚ್ಚ ಇದರಲ್ಲಿ ಸೇರಿಲ್ಲ; ಆದ್ದರಿಂದ ಇದನ್ನು ಸಂಪೂರ್ಣ farm profit ಎಂದು ಓದಬಾರದು."
+                    if is_kn
+                    else "Cultivation cost already incurred is excluded, so this must not be read as total farm profit."
+                ),
+                (
+                    f"Vision grade {assessment.quality_grade} and rejection score {assessment.rejection_probability:.1f}% are shown as commercial-risk evidence, not as an invented automatic price haircut."
+                    if not is_kn
+                    else f"Vision grade {assessment.quality_grade} ಮತ್ತು rejection score {assessment.rejection_probability:.1f}% commercial-risk evidence ಆಗಿವೆ; ಅವುಗಳನ್ನು ಸ್ವಯಂಚಾಲಿತ ಬೆಲೆ ಕಡಿತವಾಗಿ ಬಳಸಲಾಗಿಲ್ಲ."
+                ),
             ]
         )
-
-        if is_kn:
-            factor_map = {
-                "Expected operating profit": ("ನಿರೀಕ್ಷಿತ ಕಾರ್ಯಾಚರಣಾ ಲಾಭ", "ಈ ಮಾರ್ಗದ ಲಾಭ ಮತ್ತು ಎಲ್ಲಾ ಮಾರ್ಗಗಳ ಸರಾಸರಿ ಲಾಭದ ನಡುವಿನ ವ್ಯತ್ಯಾಸ."),
-                "Quality grade adjustment": ("ಗುಣಮಟ್ಟ ಗ್ರೇಡ್ ಹೊಂದಾಣಿಕೆ", f"ಗ್ರೇಡ್ {assessment.quality_grade} ಮಾರುಕಟ್ಟೆ ಬೆಲೆ ಗುಣಕವನ್ನು {grade_factor:.2f} ಗೆ ಬದಲಿಸುತ್ತದೆ."),
-                "Rejection exposure": ("ತಿರಸ್ಕಾರ ಅಪಾಯ", "ಹೆಚ್ಚಿನ ದೃಶ್ಯ ತಿರಸ್ಕಾರ ಸಾಧ್ಯತೆ ನಿರೀಕ್ಷಿತ ಮಾರಾಟ ಮೌಲ್ಯವನ್ನು ಕಡಿಮೆ ಮಾಡುತ್ತದೆ."),
-                "Risk penalty": ("ಅಪಾಯ ಕಡಿತ", "ವಾಣಿಜ್ಯ ಅನಿಶ್ಚಿತತೆ, ಗುಣಮಟ್ಟ ಕುಸಿತ ಮತ್ತು ಮಾರ್ಗ ವಿಫಲತೆಯ ಅಪಾಯಕ್ಕೆ ಕಡಿತ ಅನ್ವಯಿಸಲಾಗಿದೆ."),
-                "Market price signal": ("ಮಾರುಕಟ್ಟೆ ಬೆಲೆ ಸೂಚನೆ", "ಸಂರಕ್ಷಣಾತ್ಮಕ ₹2,000/ಕ್ವಿಂಟಲ್ ಉಲ್ಲೇಖ ಬೆಲೆಯೊಂದಿಗೆ ಹೋಲಿಸಿದ ಕೊಡುಗೆ."),
-            }
-            for item in decision_factors:
-                if item["factor"] in factor_map:
-                    item["factor"], item["explanation"] = factor_map[item["factor"]]
 
         return {
             "recommended_action": winner.action,
@@ -312,14 +416,15 @@ class RecommendationEngine:
             "expected_roi": round(winner.roi, 2),
             "risk_score": round(winner.risk_score, 2),
             "confidence": round(confidence, 2),
-            "alternatives": [c.public() for c in ranked],
+            "alternatives": [candidate.public() for candidate in ranked],
             "explanation": explanation,
-            "cost_breakdown": {k: round(v, 2) for k, v in winner.costs.items()},
+            "cost_breakdown": {key: round(value, 2) for key, value in winner.costs.items()},
             "decision_factors": decision_factors,
         }
 
     def _candidate(
         self,
+        *,
         action: str,
         title: str,
         market: str,
@@ -327,15 +432,18 @@ class RecommendationEngine:
         selling_price: float,
         gross: float,
         net: float,
-        total_cost: float,
         risk: float,
         confidence: float,
         costs: dict[str, float],
         reasons: list[str],
+        eligible: bool,
+        assumption_status: str,
+        price_source: str,
     ) -> Candidate:
-        roi = net / max(total_cost, 1.0) * 100
-        risk_penalty = max(0.0, net) * risk / 100 * 0.34 + risk * 12
-        score = net - risk_penalty
+        # Keep the API field name `roi` for backward compatibility, but the value
+        # is now a bounded net-realization margin (net / gross), not the old
+        # misleading net / post-harvest-cost ratio that could show 300%+.
+        realization_margin = (net / gross * 100.0) if gross > 0 else 0.0
         return Candidate(
             action=action,
             title=title,
@@ -344,10 +452,13 @@ class RecommendationEngine:
             selling_price=round(selling_price, 2),
             gross_revenue=round(gross, 2),
             net_profit=round(net, 2),
-            roi=round(roi, 2),
+            roi=round(realization_margin, 2),
             risk_score=round(risk, 2),
             confidence=round(confidence, 2),
-            score=round(score, 2),
-            costs={k: round(v, 2) for k, v in costs.items()},
+            score=round(net, 2) if eligible else -1e18,
+            costs={key: round(value, 2) for key, value in costs.items()},
             reasons=reasons,
+            eligible=eligible,
+            assumption_status=assumption_status,
+            price_source=price_source,
         )

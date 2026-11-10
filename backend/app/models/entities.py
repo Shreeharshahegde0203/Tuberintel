@@ -3,19 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import (
-    Boolean,
-    Date,
-    DateTime,
-    Float,
-    ForeignKey,
-    Index,
-    Integer,
-    JSON,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -30,7 +18,6 @@ class Batch(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     batch_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     variety: Mapped[str] = mapped_column(String(80), default="Unknown")
     quantity_kg: Mapped[float] = mapped_column(Float)
     farmer_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -112,24 +99,52 @@ class Recommendation(Base):
     batch: Mapped[Batch] = relationship(back_populates="recommendation")
 
 
+class MarketState(Base):
+    __tablename__ = "market_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(4), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    state_type: Mapped[str] = mapped_column(String(32), default="State")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    source: Mapped[str] = mapped_column(String(100), default="Government of India state directory")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    mandis: Mapped[list[MandiDirectory]] = relationship(back_populates="state", cascade="all, delete-orphan")
+
+
+class MandiDirectory(Base):
+    __tablename__ = "mandi_directory"
+    __table_args__ = (
+        UniqueConstraint("state_id", "district", "market", name="uq_mandi_directory_location"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    state_id: Mapped[int] = mapped_column(ForeignKey("market_states.id", ondelete="CASCADE"), index=True)
+    district: Mapped[str] = mapped_column(String(100), index=True)
+    market: Mapped[str] = mapped_column(String(160), index=True)
+    source: Mapped[str] = mapped_column(String(120), default="data.gov.in / AGMARKNET")
+    source_market_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_enam: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    state: Mapped[MarketState] = relationship(back_populates="mandis")
+
+
 class MarketPrice(Base):
     __tablename__ = "market_prices"
     __table_args__ = (
         UniqueConstraint(
-            "market_id",
-            "commodity",
-            "variety",
-            "grade",
-            "arrival_date",
-            "source",
-            name="uq_market_prices_market_commodity_variety_grade_date_source",
+            "state", "district", "market", "commodity", "variety", "grade", "arrival_date",
+            name="uq_market_price_observation",
         ),
-        Index("ix_market_prices_state_district_market", "state", "district", "market"),
-        Index("ix_market_prices_commodity_variety_date", "commodity", "variety", "arrival_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    market_id: Mapped[int | None] = mapped_column(ForeignKey("markets.id", ondelete="SET NULL"), nullable=True, index=True)
     state: Mapped[str] = mapped_column(String(80), index=True)
     district: Mapped[str] = mapped_column(String(80), index=True)
     market: Mapped[str] = mapped_column(String(120), index=True)
@@ -142,90 +157,85 @@ class MarketPrice(Base):
     modal_price: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(100), default="seed")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    source_record_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
-
-    market_ref: Mapped["Market | None"] = relationship(back_populates="prices")
 
 
-class MarketState(Base):
-    __tablename__ = "market_states"
+class PriceModelVersion(Base):
+    __tablename__ = "price_model_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(80), index=True)
+    model_version: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    feature_version: Mapped[str] = mapped_column(String(40), default="forecast-v2")
+    training_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    training_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    training_rows: Mapped[int] = mapped_column(Integer, default=0)
+    markets: Mapped[int] = mapped_column(Integer, default=0)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    artifact_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PriceForecast(Base):
+    __tablename__ = "price_forecasts"
     __table_args__ = (
-        UniqueConstraint("normalized_name", name="uq_market_states_normalized_name"),
+        UniqueConstraint(
+            "state", "district", "market", "variety", "grade",
+            "forecast_origin", "target_date", "model_version",
+            name="uq_price_forecast_snapshot",
+        ),
+        Index("ix_price_forecast_lookup", "market", "variety", "forecast_origin", "target_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), index=True)
-    normalized_name: Mapped[str] = mapped_column(String(120), index=True)
-    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    state: Mapped[str] = mapped_column(String(80), index=True)
+    district: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    market: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    variety: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    grade: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    forecast_origin: Mapped[date] = mapped_column(Date, index=True)
+    target_date: Mapped[date] = mapped_column(Date, index=True)
+    horizon_days: Mapped[int] = mapped_column(Integer)
+    predicted_price: Mapped[float] = mapped_column(Float)
+    lower_bound: Mapped[float] = mapped_column(Float)
+    upper_bound: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[str] = mapped_column(String(20), default="low")
+    model_name: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(120), index=True)
+    actual_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    absolute_error: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-    districts: Mapped[list["MarketDistrict"]] = relationship(back_populates="state_ref", cascade="all, delete-orphan")
-    markets: Mapped[list["Market"]] = relationship(back_populates="state_ref")
-
-
-class MarketDistrict(Base):
-    __tablename__ = "market_districts"
-    __table_args__ = (
-        UniqueConstraint("state_id", "normalized_name", name="uq_market_districts_state_normalized_name"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    state_id: Mapped[int] = mapped_column(ForeignKey("market_states.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(120), index=True)
-    normalized_name: Mapped[str] = mapped_column(String(120), index=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-    state_ref: Mapped["MarketState"] = relationship(back_populates="districts")
-    markets: Mapped[list["Market"]] = relationship(back_populates="district_ref")
-
-
-class Market(Base):
-    __tablename__ = "markets"
-    __table_args__ = (
-        UniqueConstraint("state_id", "district_id", "normalized_name", name="uq_markets_state_district_normalized_name"),
-        Index("ix_markets_source_active", "source", "active"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    state_id: Mapped[int] = mapped_column(ForeignKey("market_states.id", ondelete="CASCADE"), index=True)
-    district_id: Mapped[int] = mapped_column(ForeignKey("market_districts.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(160), index=True)
-    normalized_name: Mapped[str] = mapped_column(String(160), index=True)
-    external_market_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    external_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
-    source: Mapped[str] = mapped_column(String(80), default="manual")
-    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
-    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-    state_ref: Mapped["MarketState"] = relationship(back_populates="markets")
-    district_ref: Mapped["MarketDistrict"] = relationship(back_populates="markets")
-    prices: Mapped[list[MarketPrice]] = relationship(back_populates="market_ref")
 
 
 class MarketSyncRun(Base):
     __tablename__ = "market_sync_runs"
-    __table_args__ = (
-        Index("ix_market_sync_runs_source_status", "source", "status"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source: Mapped[str] = mapped_column(String(80), index=True)
-    state: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    status: Mapped[str] = mapped_column(String(32), index=True)
+    source: Mapped[str] = mapped_column(String(100), default="data.gov.in / AGMARKNET")
+    resource_id: Mapped[str] = mapped_column(String(80))
+    state: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="running", index=True)
     records_received: Mapped[int] = mapped_column(Integer, default=0)
     records_inserted: Mapped[int] = mapped_column(Integer, default=0)
     records_updated: Mapped[int] = mapped_column(Integer, default=0)
-    triggered_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NewsArticle(Base):
+    __tablename__ = "news_articles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(140), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(String(1000), unique=True, index=True)
+    image_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    category: Mapped[str] = mapped_column(String(80), default="Potato industry", index=True)
+    language: Mapped[str] = mapped_column(String(12), default="en")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class Feedback(Base):
@@ -241,3 +251,89 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     batch: Mapped[Batch] = relationship(back_populates="feedback")
+
+
+class TradeListing(Base):
+    __tablename__ = "trade_listings"
+    __table_args__ = (
+        UniqueConstraint("listing_code", name="uq_trade_listing_code"),
+        UniqueConstraint("idempotency_key", name="uq_trade_listing_idempotency_key"),
+        Index("ix_trade_listing_discovery", "status", "listing_type", "state", "district", "variety"),
+        Index("ix_trade_listing_price_created", "price_per_quintal", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    listing_code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    listing_type: Mapped[str] = mapped_column(String(8), index=True)
+    owner_ref: Mapped[str] = mapped_column(String(160), index=True)
+    owner_name: Mapped[str] = mapped_column(String(120))
+    contact_phone: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    variety: Mapped[str] = mapped_column(String(80), index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    price_per_quintal: Mapped[float] = mapped_column(Float, index=True)
+    state: Mapped[str] = mapped_column(String(80), index=True)
+    district: Mapped[str] = mapped_column(String(100), index=True)
+    location: Mapped[str] = mapped_column(String(160))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE", index=True)
+    source_batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id", ondelete="SET NULL"), nullable=True, index=True)
+    quality_grade: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    size_class: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    verified_quality: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class TradeFavorite(Base):
+    __tablename__ = "trade_favorites"
+    __table_args__ = (
+        UniqueConstraint("owner_ref", "listing_id", name="uq_trade_favorite_owner_listing"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_ref: Mapped[str] = mapped_column(String(160), index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("trade_listings.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ColdStorageFacility(Base):
+    __tablename__ = "cold_storage_facilities"
+    __table_args__ = (
+        Index("ix_cold_storage_location", "state", "district"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    state: Mapped[str] = mapped_column(String(80), index=True)
+    district: Mapped[str] = mapped_column(String(100), index=True)
+    location: Mapped[str] = mapped_column(String(180))
+    total_capacity_tonnes: Mapped[float] = mapped_column(Float)
+    available_capacity_tonnes: Mapped[float] = mapped_column(Float)
+    estimated_cost_per_quintal_day: Mapped[float] = mapped_column(Float)
+    phone: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    source: Mapped[str] = mapped_column(String(120), default="seeded demonstration directory")
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class TransportProvider(Base):
+    __tablename__ = "transport_providers"
+    __table_args__ = (
+        Index("ix_transport_provider_location", "state", "district"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    state: Mapped[str] = mapped_column(String(80), index=True)
+    district: Mapped[str] = mapped_column(String(100), index=True)
+    base_location: Mapped[str] = mapped_column(String(180))
+    vehicle_types: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rate_per_km_tonne: Mapped[float] = mapped_column(Float)
+    phone: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    source: Mapped[str] = mapped_column(String(120), default="seeded demonstration directory")
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

@@ -4,11 +4,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import hashlib
+
 import cv2
 import numpy as np
 
 from app.core.config import get_settings
 from app.services.trained_inference import TrainedModelAdapter
+from app.services.vision_fusion import VisionFusionEngine
 
 
 @dataclass
@@ -47,7 +50,12 @@ class PotatoImageAnalyzer:
     def __init__(self, model_mode: str = "cv_demo") -> None:
         self.model_mode = model_mode
         settings = get_settings()
-        self.trained_adapter = TrainedModelAdapter(settings.quality_model_path, settings.defect_model_path)
+        condition_path = settings.condition_model_path or settings.quality_model_path
+        self.trained_adapter = TrainedModelAdapter(
+            settings.roi_model_path,
+            condition_path,
+            settings.defect_model_path,
+        )
 
     @staticmethod
     def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -100,10 +108,307 @@ class PotatoImageAnalyzer:
 
         return mask, contours
 
+    @staticmethod
+    def _render_vision_overlay(
+        image: np.ndarray,
+        trained_predictions: dict[str, Any],
+        grade: str,
+        quality_score: float,
+    ) -> np.ndarray:
+        canvas = image.copy()
+
+        potatoes = (
+            trained_predictions.get(
+                "potatoes",
+                []
+            )
+            or []
+        )
+
+        defect_colours = {
+            "scab": (
+                20,
+                145,
+                220,
+            ),
+            "rot": (
+                55,
+                55,
+                220,
+            ),
+            "greening": (
+                65,
+                180,
+                75,
+            ),
+            "mechanical_damage": (
+                215,
+                115,
+                45,
+            ),
+        }
+
+        # ----------------------------------------------------
+        # MODEL C DEFECT MASKS
+        # ----------------------------------------------------
+
+        for potato in potatoes:
+            for defect in (
+                potato.get(
+                    "defect_regions",
+                    []
+                )
+                or []
+            ):
+                label = str(
+                    defect.get(
+                        "label",
+                        "defect",
+                    )
+                )
+
+                polygon = defect.get(
+                    "polygon",
+                    []
+                )
+
+                if len(polygon) < 3:
+                    continue
+
+                points = np.array(
+                    polygon,
+                    dtype=np.int32,
+                ).reshape(
+                    (-1, 1, 2)
+                )
+
+                colour = (
+                    defect_colours.get(
+                        label,
+                        (
+                            180,
+                            80,
+                            180,
+                        ),
+                    )
+                )
+
+                layer = canvas.copy()
+
+                cv2.fillPoly(
+                    layer,
+                    [points],
+                    colour,
+                )
+
+                canvas = cv2.addWeighted(
+                    layer,
+                    0.34,
+                    canvas,
+                    0.66,
+                    0,
+                )
+
+                cv2.polylines(
+                    canvas,
+                    [points],
+                    True,
+                    colour,
+                    2,
+                    cv2.LINE_AA,
+                )
+
+        # ----------------------------------------------------
+        # MODEL A ROI BOUNDARIES + MODEL B CONDITION LABELS
+        # ----------------------------------------------------
+
+        for index, potato in enumerate(
+            potatoes,
+            start=1,
+        ):
+            polygon = potato.get(
+                "roi_polygon",
+                []
+            )
+
+            if len(polygon) >= 3:
+                points = np.array(
+                    polygon,
+                    dtype=np.int32,
+                ).reshape(
+                    (-1, 1, 2)
+                )
+
+                cv2.polylines(
+                    canvas,
+                    [points],
+                    True,
+                    (
+                        65,
+                        190,
+                        105,
+                    ),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            box = potato.get(
+                "box_xyxy",
+                []
+            )
+
+            if len(box) != 4:
+                continue
+
+            x1, y1, _, _ = [
+                int(value)
+                for value in box
+            ]
+
+            condition = (
+                potato.get(
+                    "condition"
+                )
+                or "Uncertain"
+            )
+
+            condition_confidence = (
+                potato.get(
+                    "condition_confidence"
+                )
+            )
+
+            if condition_confidence is None:
+                label = (
+                    f"#{index} {condition}"
+                )
+            else:
+                label = (
+                    f"#{index} "
+                    f"{condition} "
+                    f"{float(condition_confidence) * 100:.0f}%"
+                )
+
+            font_scale = 0.47
+            thickness = 1
+
+            (
+                text_width,
+                text_height,
+            ), _ = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                thickness,
+            )
+
+            label_x = max(
+                3,
+                x1,
+            )
+
+            label_y = max(
+                text_height + 8,
+                y1 - 6,
+            )
+
+            cv2.rectangle(
+                canvas,
+                (
+                    label_x - 3,
+                    label_y
+                    - text_height
+                    - 5,
+                ),
+                (
+                    label_x
+                    + text_width
+                    + 5,
+                    label_y + 4,
+                ),
+                (
+                    26,
+                    74,
+                    48,
+                ),
+                -1,
+            )
+
+            cv2.putText(
+                canvas,
+                label,
+                (
+                    label_x,
+                    label_y,
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (
+                    245,
+                    248,
+                    245,
+                ),
+                thickness,
+                cv2.LINE_AA,
+            )
+
+        # ----------------------------------------------------
+        # SUMMARY HEADER
+        # ----------------------------------------------------
+
+        title = (
+            "TuberIntel Vision v1"
+            f" | Grade {grade}"
+            f" | Quality {quality_score:.1f}/100"
+        )
+
+        cv2.rectangle(
+            canvas,
+            (0, 0),
+            (
+                canvas.shape[1],
+                54,
+            ),
+            (
+                24,
+                58,
+                40,
+            ),
+            -1,
+        )
+
+        cv2.putText(
+            canvas,
+            title,
+            (
+                18,
+                35,
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.72,
+            (
+                245,
+                248,
+                245,
+            ),
+            2,
+            cv2.LINE_AA,
+        )
+
+        return canvas
+
     def analyze(self, image_path: Path, annotated_path: Path) -> ImageMetrics:
-        image = cv2.imread(str(image_path))
+        try:
+            image_bytes = np.fromfile(str(image_path), dtype=np.uint8)
+            image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+        except (OSError, ValueError, cv2.error):
+            image = None
         if image is None:
             raise ValueError("The uploaded file could not be decoded as an image.")
+
+        source_sha256 = hashlib.sha256(
+            image_path.read_bytes()
+        ).hexdigest()
 
         max_side = 1280
         h, w = image.shape[:2]
@@ -194,10 +499,23 @@ class PotatoImageAnalyzer:
         )
 
         trained_predictions: dict[str, Any] = {}
-        if self.model_mode in {"classifier", "detector", "hybrid"} and self.trained_adapter.enabled:
+        if self.model_mode in {"classifier", "detector", "hybrid", "vision_v1"} and self.trained_adapter.enabled:
             try:
                 trained_predictions = self.trained_adapter.predict(image_path, image)
+
+                stages = trained_predictions.get("stages", {})
+
+                if (
+                    stages.get("roi")
+                    and trained_predictions.get("potato_count") == 0
+                ):
+                    raise ValueError(
+                        "Model A found no usable potato region. "
+                        "Upload a clear image containing visible potatoes."
+                    )
+
                 detected = trained_predictions.get("defect_area_percent", {})
+
                 def blend(current: float, labels: tuple[str, ...], scale: float = 7.0) -> float:
                     trained_value = sum(float(detected.get(label, 0.0)) for label in labels) * scale
                     return self._clamp(current * 0.42 + trained_value * 0.58) if trained_value else current
@@ -239,7 +557,56 @@ class PotatoImageAnalyzer:
             + max(0, surface_defect_severity - 35) * 0.35
             + max(0, discoloration_severity - 30) * 0.18
         )
-        confidence = self._clamp(55 + image_quality * 0.30 + min(len(contours), 8) * 1.3 + (5 if trained_predictions and "warning" not in trained_predictions else 0), 45, 96)
+        confidence = self._clamp(
+            55
+            + image_quality * 0.30
+            + min(len(contours), 8) * 1.3
+            + (
+                5
+                if trained_predictions
+                and "warning" not in trained_predictions
+                else 0
+            ),
+            45,
+            96,
+        )
+
+        fusion_details: dict[str, Any] | None = None
+
+        if (
+            trained_predictions.get("pipeline")
+            == "tuberintel-vision-v1"
+        ):
+            fusion = VisionFusionEngine.fuse(
+                image_quality=image_quality,
+                size_uniformity=size_uniformity,
+                cv_quality_score=quality_score,
+                cv_rejection_probability=rejection_probability,
+                cv_confidence=confidence,
+                bruise_severity=bruise_severity,
+                crack_severity=crack_severity,
+                scab_severity=scab_severity,
+                discoloration_severity=discoloration_severity,
+                deformity_severity=deformity_severity,
+                sprout_severity=sprout_severity,
+                trained_predictions=trained_predictions,
+            )
+
+            bruise_severity = fusion.bruise_severity
+            crack_severity = fusion.crack_severity
+            scab_severity = fusion.scab_severity
+            discoloration_severity = fusion.discoloration_severity
+            deformity_severity = fusion.deformity_severity
+            sprout_severity = fusion.sprout_severity
+            surface_defect_severity = fusion.surface_defect_severity
+
+            quality_score = fusion.quality_score
+            grade = fusion.quality_grade
+            commercial_class = fusion.commercial_class
+            rejection_probability = fusion.rejection_probability
+            confidence = fusion.confidence
+
+            fusion_details = fusion.to_dict()
 
         overlay = image.copy()
         red = np.zeros_like(image); red[:, :, 2] = 255
@@ -277,11 +644,48 @@ class PotatoImageAnalyzer:
             1,
             cv2.LINE_AA,
         )
-        annotated_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(annotated_path), overlay)
+        if fusion_details:
+            overlay = self._render_vision_overlay(
+                image=image,
+                trained_predictions=trained_predictions,
+                grade=grade,
+                quality_score=quality_score,
+            )
+
+        annotated_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        ok, encoded_image = cv2.imencode(".jpg", overlay)
+
+        if not ok:
+
+            raise ValueError("Could not encode annotated image.")
+
+        try:
+
+            encoded_image.tofile(str(annotated_path))
+
+        except OSError as exc:
+
+            raise ValueError("Could not save annotated image.") from exc
+        effective_potato_count = max(
+            1,
+            len(contours),
+        )
+
+        model_a_count = trained_predictions.get(
+            "potato_count"
+        )
+
+        if model_a_count is not None:
+            effective_potato_count = int(
+                model_a_count
+            )
 
         return ImageMetrics(
-            potato_count=max(1, len(contours)),
+            potato_count=effective_potato_count,
             image_quality=round(image_quality, 2),
             size_uniformity=round(size_uniformity, 2),
             bruise_severity=round(bruise_severity, 2),
@@ -296,7 +700,16 @@ class PotatoImageAnalyzer:
             commercial_class=commercial_class,
             rejection_probability=round(rejection_probability, 2),
             confidence=round(confidence, 2),
-            explainability_mode=("hybrid trained-model + computer-vision features" if trained_predictions and "warning" not in trained_predictions else "computer-vision feature overlays (Grad-CAM enabled when trained weights are installed)"),
+            explainability_mode=(
+                "TuberIntel Vision v1 + deterministic computer-vision safeguards"
+                if fusion_details
+                else (
+                    "hybrid trained-model + computer-vision features"
+                    if trained_predictions
+                    and "warning" not in trained_predictions
+                    else "computer-vision feature overlays"
+                )
+            ),
             raw_features={
                 "mask_coverage": round(float(np.mean(mask_bool)), 4),
                 "laplacian_variance": round(lap_var, 2),
@@ -307,49 +720,632 @@ class PotatoImageAnalyzer:
                 "edge_ratio": round(crack_ratio, 4),
                 "mean_shape_score": round(shape_score, 4),
                 "mean_solidity": round(mean_solidity, 4),
+                "source_sha256": source_sha256,
                 "trained_predictions": trained_predictions,
+                "vision_fusion": fusion_details,
             },
         )
 
     @staticmethod
-    def aggregate(items: list[ImageMetrics], model_mode: str) -> dict[str, Any]:
+    def aggregate(
+        items: list[ImageMetrics],
+        model_mode: str,
+    ) -> dict[str, Any]:
         if not items:
-            raise ValueError("At least one image analysis is required.")
+            raise ValueError(
+                "At least one image analysis is required."
+            )
 
-        def mean(field: str) -> float:
-            return round(float(np.mean([getattr(item, field) for item in items])), 2)
+        # ----------------------------------------------------
+        # EXACT DUPLICATE PROTECTION
+        # ----------------------------------------------------
 
-        quality_score = mean("quality_score")
-        surface = mean("surface_defect_severity")
-        if quality_score >= 88 and surface < 12:
-            grade, commercial = "A", "Premium fresh / export candidate"
+        representatives: dict[str, ImageMetrics] = {}
+        unhashed: list[ImageMetrics] = []
+        duplicate_groups: dict[str, int] = {}
+
+        for item in items:
+            image_hash = str(
+                item.raw_features.get(
+                    "source_sha256",
+                    "",
+                )
+                or ""
+            )
+
+            if not image_hash:
+                unhashed.append(item)
+                continue
+
+            duplicate_groups[image_hash] = (
+                duplicate_groups.get(
+                    image_hash,
+                    0,
+                )
+                + 1
+            )
+
+            previous = representatives.get(
+                image_hash
+            )
+
+            if (
+                previous is None
+                or item.image_quality
+                > previous.image_quality
+            ):
+                representatives[
+                    image_hash
+                ] = item
+
+        independent = (
+            list(representatives.values())
+            + unhashed
+        )
+
+        if not independent:
+            independent = list(items)
+
+        duplicate_images_ignored = (
+            len(items)
+            - len(independent)
+        )
+
+        duplicate_sets = [
+            {
+                "sha256_prefix": digest[:12],
+                "copies": count,
+            }
+            for digest, count
+            in duplicate_groups.items()
+            if count > 1
+        ]
+
+        # ----------------------------------------------------
+        # WEIGHT HELPERS
+        # ----------------------------------------------------
+
+        def image_weight(
+            item: ImageMetrics,
+        ) -> float:
+            normalized = max(
+                0.0,
+                min(
+                    1.0,
+                    item.image_quality
+                    / 100.0,
+                ),
+            )
+
+            return (
+                0.50
+                + 0.50 * normalized
+            )
+
+        def weighted_mean(
+            field: str,
+        ) -> float:
+            values = [
+                float(
+                    getattr(
+                        item,
+                        field,
+                    )
+                )
+                for item in independent
+            ]
+
+            weights = [
+                image_weight(item)
+                for item in independent
+            ]
+
+            denominator = sum(weights)
+
+            if denominator <= 0:
+                return round(
+                    float(
+                        np.mean(values)
+                    ),
+                    2,
+                )
+
+            result = sum(
+                value * weight
+                for value, weight
+                in zip(
+                    values,
+                    weights,
+                    strict=False,
+                )
+            ) / denominator
+
+            return round(
+                float(result),
+                2,
+            )
+
+        def percentile(
+            field: str,
+            q: float,
+        ) -> float:
+            values = np.array(
+                [
+                    float(
+                        getattr(
+                            item,
+                            field,
+                        )
+                    )
+                    for item in independent
+                ],
+                dtype=np.float64,
+            )
+
+            return round(
+                float(
+                    np.percentile(
+                        values,
+                        q,
+                    )
+                ),
+                2,
+            )
+
+        # ----------------------------------------------------
+        # ROBUST DEFECT AGGREGATION
+        # ----------------------------------------------------
+
+        size_uniformity = weighted_mean(
+            "size_uniformity"
+        )
+
+        def defect_metric(
+            field: str,
+            mean_weight: float = 0.72,
+        ) -> float:
+            upper_weight = (
+                1.0 - mean_weight
+            )
+
+            return round(
+                mean_weight
+                * weighted_mean(field)
+                + upper_weight
+                * percentile(
+                    field,
+                    75,
+                ),
+                2,
+            )
+
+        bruise = defect_metric(
+            "bruise_severity"
+        )
+
+        crack = defect_metric(
+            "crack_severity"
+        )
+
+        scab = defect_metric(
+            "scab_severity"
+        )
+
+        discoloration = defect_metric(
+            "discoloration_severity"
+        )
+
+        deformity = defect_metric(
+            "deformity_severity",
+            0.75,
+        )
+
+        sprout = defect_metric(
+            "sprout_severity"
+        )
+
+        surface = round(
+            0.70
+            * weighted_mean(
+                "surface_defect_severity"
+            )
+            + 0.30
+            * percentile(
+                "surface_defect_severity",
+                75,
+            ),
+            2,
+        )
+
+        # ----------------------------------------------------
+        # QUALITY SCORE
+        # ----------------------------------------------------
+
+        quality_mean = weighted_mean(
+            "quality_score"
+        )
+
+        quality_lower_quartile = percentile(
+            "quality_score",
+            25,
+        )
+
+        quality_score = round(
+            0.82 * quality_mean
+            + 0.18
+            * quality_lower_quartile,
+            2,
+        )
+
+        quality_score = float(
+            max(
+                0.0,
+                min(
+                    100.0,
+                    quality_score,
+                ),
+            )
+        )
+
+        if (
+            quality_score >= 88
+            and surface < 12
+        ):
+            grade = "A"
+            commercial = (
+                "Premium fresh / export candidate"
+            )
+
         elif quality_score >= 74:
-            grade, commercial = "B", "Fresh market"
+            grade = "B"
+            commercial = "Fresh market"
+
         elif quality_score >= 55:
-            grade, commercial = "C", "Processing / secondary market"
+            grade = "C"
+            commercial = (
+                "Processing / secondary market"
+            )
+
         else:
-            grade, commercial = "D", "Clearance / feed / reject review"
+            grade = "D"
+            commercial = (
+                "Clearance / feed / reject review"
+            )
+
+        rejection_probability = round(
+            0.72
+            * weighted_mean(
+                "rejection_probability"
+            )
+            + 0.28
+            * percentile(
+                "rejection_probability",
+                75,
+            ),
+            2,
+        )
+
+        confidence = weighted_mean(
+            "confidence"
+        )
+
+        # ----------------------------------------------------
+        # CROSS-IMAGE CONSISTENCY
+        # ----------------------------------------------------
+
+        quality_values = np.array(
+            [
+                item.quality_score
+                for item in independent
+            ],
+            dtype=np.float64,
+        )
+
+        quality_stddev = (
+            float(
+                np.std(
+                    quality_values
+                )
+            )
+            if len(quality_values) > 1
+            else 0.0
+        )
+
+        quality_range = (
+            float(
+                np.max(quality_values)
+                - np.min(quality_values)
+            )
+            if len(quality_values) > 1
+            else 0.0
+        )
+
+        review_reasons: set[str] = set()
+
+        for item in independent:
+            fusion = (
+                item.raw_features.get(
+                    "vision_fusion"
+                )
+                or {}
+            )
+
+            for reason in fusion.get(
+                "review_reasons",
+                [],
+            ):
+                review_reasons.add(
+                    str(reason)
+                )
+
+        if quality_stddev >= 12.0:
+            review_reasons.add(
+                "Quality assessment varies substantially "
+                "between uploaded views."
+            )
+
+        if quality_range >= 30.0:
+            review_reasons.add(
+                "Uploaded views contain strongly different "
+                "quality evidence."
+            )
+
+        low_quality_views = sum(
+            1
+            for item in independent
+            if item.image_quality < 45.0
+        )
+
+        if (
+            independent
+            and low_quality_views
+            > len(independent) / 2
+        ):
+            review_reasons.add(
+                "Most uploaded views have low capture quality."
+            )
+
+        # ----------------------------------------------------
+        # MODEL B / C BATCH SUMMARIES
+        # ----------------------------------------------------
+
+        condition_samples: list[
+            dict[str, float]
+        ] = []
+
+        defect_samples: list[
+            dict[str, float]
+        ] = []
+
+        for item in independent:
+            fusion = (
+                item.raw_features.get(
+                    "vision_fusion"
+                )
+                or {}
+            )
+
+            diagnostics = (
+                fusion.get(
+                    "diagnostics"
+                )
+                or {}
+            )
+
+            conditions = (
+                diagnostics.get(
+                    "condition_distribution"
+                )
+                or {}
+            )
+
+            defects = (
+                diagnostics.get(
+                    "defect_area_percent"
+                )
+                or {}
+            )
+
+            if conditions:
+                condition_samples.append(
+                    {
+                        str(key): float(value)
+                        for key, value
+                        in conditions.items()
+                    }
+                )
+
+            if defects:
+                defect_samples.append(
+                    {
+                        str(key): float(value)
+                        for key, value
+                        in defects.items()
+                    }
+                )
+
+        def average_dicts(
+            samples: list[
+                dict[str, float]
+            ],
+            decimals: int,
+        ) -> dict[str, float]:
+            labels = sorted(
+                {
+                    label
+                    for sample in samples
+                    for label in sample
+                }
+            )
+
+            if not labels:
+                return {}
+
+            return {
+                label: round(
+                    float(
+                        np.mean(
+                            [
+                                sample.get(
+                                    label,
+                                    0.0,
+                                )
+                                for sample
+                                in samples
+                            ]
+                        )
+                    ),
+                    decimals,
+                )
+                for label in labels
+            }
+
+        batch_conditions = average_dicts(
+            condition_samples,
+            6,
+        )
+
+        batch_defects = average_dicts(
+            defect_samples,
+            4,
+        )
+
+        top_condition = None
+
+        if batch_conditions:
+            top_condition = max(
+                batch_conditions,
+                key=batch_conditions.get,
+            )
+
+        vision_v1_images = sum(
+            1
+            for item in independent
+            if item.raw_features.get(
+                "vision_fusion"
+            )
+        )
+
+        model_artifacts: dict[
+            str,
+            dict[str, Any],
+        ] = {}
+
+        for item in independent:
+            trained = (
+                item.raw_features.get(
+                    "trained_predictions"
+                )
+                or {}
+            )
+
+            artifacts = (
+                trained.get(
+                    "model_artifacts"
+                )
+                or {}
+            )
+
+            for key, value in artifacts.items():
+                if isinstance(
+                    value,
+                    dict,
+                ):
+                    model_artifacts[
+                        str(key)
+                    ] = dict(
+                        value
+                    )
+
+        # ----------------------------------------------------
+        # FINAL EXISTING DB CONTRACT
+        # ----------------------------------------------------
 
         return {
             "quality_score": quality_score,
             "quality_grade": grade,
             "commercial_class": commercial,
-            "rejection_probability": mean("rejection_probability"),
-            "size_uniformity": mean("size_uniformity"),
-            "bruise_severity": mean("bruise_severity"),
-            "crack_severity": mean("crack_severity"),
-            "scab_severity": mean("scab_severity"),
-            "discoloration_severity": mean("discoloration_severity"),
-            "deformity_severity": mean("deformity_severity"),
-            "sprout_severity": mean("sprout_severity"),
-            "surface_defect_severity": surface,
-            "confidence": mean("confidence"),
+            "rejection_probability": (
+                rejection_probability
+            ),
+            "size_uniformity": size_uniformity,
+            "bruise_severity": bruise,
+            "crack_severity": crack,
+            "scab_severity": scab,
+            "discoloration_severity": (
+                discoloration
+            ),
+            "deformity_severity": deformity,
+            "sprout_severity": sprout,
+            "surface_defect_severity": (
+                surface
+            ),
+            "confidence": confidence,
             "model_mode": model_mode,
             "feature_summary": {
-                "images_analyzed": len(items),
-                "potatoes_detected": sum(item.potato_count for item in items),
-                "average_image_quality": mean("image_quality"),
-                "explainability_mode": items[0].explainability_mode,
-                "per_image": [item.to_dict() for item in items],
+                "images_analyzed": len(
+                    items
+                ),
+                "independent_images": len(
+                    independent
+                ),
+                "duplicate_images_ignored": (
+                    duplicate_images_ignored
+                ),
+                "duplicate_sets": (
+                    duplicate_sets
+                ),
+                "potatoes_detected": sum(
+                    item.potato_count
+                    for item in independent
+                ),
+                "average_image_quality": (
+                    weighted_mean(
+                        "image_quality"
+                    )
+                ),
+                "quality_score_stddev": round(
+                    quality_stddev,
+                    2,
+                ),
+                "quality_score_range": round(
+                    quality_range,
+                    2,
+                ),
+                "aggregation_method": (
+                    "independent-view quality-weighted "
+                    "robust aggregation"
+                ),
+                "manual_review_required": bool(
+                    review_reasons
+                ),
+                "review_reasons": sorted(
+                    review_reasons
+                ),
+                "vision_v1_images": (
+                    vision_v1_images
+                ),
+                "model_artifacts": (
+                    model_artifacts
+                ),
+                "condition_distribution": (
+                    batch_conditions
+                ),
+                "top_condition": (
+                    top_condition
+                ),
+                "defect_area_percent": (
+                    batch_defects
+                ),
+                "explainability_mode": (
+                    independent[
+                        0
+                    ].explainability_mode
+                ),
+                "per_image": [
+                    item.to_dict()
+                    for item in items
+                ],
             },
         }
+

@@ -5,9 +5,18 @@ export type ForecastPoint = {
   upper_bound: number
 }
 
+export type DailyPricePoint = {
+  date: string
+  average_modal_price: number
+  minimum_price: number
+  maximum_price: number
+  market_count: number
+  moving_average_7d: number | null
+  moving_average_30d: number | null
+}
+
 export type MarketPrice = {
-  id: number
-  market_id: number | null
+  id?: number | null
   state: string
   district: string
   market: string
@@ -20,35 +29,74 @@ export type MarketPrice = {
   modal_price: number
   source: string
   fetched_at: string
-  source_record_id: string | null
 }
 
-export type MarketConsolidated = {
-  date: string | null
-  active_mandis: number
-  records: number
-  average_modal_price: number | null
-  minimum_price: number | null
-  maximum_price: number | null
-  commodity: string
-  data_source: string
-  arrival_volume: number | null
-  arrival_volume_note: string
-  change_percent_7d: number
-  direction: 'rising' | 'falling' | 'stable'
-}
-
-export type TopMarketItem = {
-  market_id: number | null
+export type MarketRank = {
+  rank: number
   state: string
   district: string
   market: string
-  modal_price: number
-  arrival_date: string
   variety: string
+  modal_price: number
+  minimum_price: number
+  maximum_price: number
+  price_spread: number
+  arrival_date: string
+}
+
+export type ConsolidatedMarketReport = {
+  state: string | null
+  district: string | null
+  date: string | null
+  active_mandis: number
+  records: number
+  average_modal_price: number
+  median_modal_price: number
+  minimum_price: number
+  maximum_price: number
+  average_spread: number
+  change_percent_7d: number
+  direction: 'rising' | 'falling' | 'stable'
+  source_note: string
+  freshness: string
+  arrival_volume_available: boolean
+  arrival_volume_note: string
+}
+
+export type MarketStateOption = {
+  code: string
+  name: string
+  type: 'State' | 'Union Territory' | string
+  mandi_count: number
+}
+
+export type MandiDirectoryItem = {
+  id: number
+  state: string
+  district: string
+  market: string
   source: string
-  rank: number
-  change_percent: number | null
+  is_enam: boolean | null
+  last_seen_at: string
+}
+
+export type MandiDirectoryResponse = {
+  state: string
+  districts: string[]
+  mandis: MandiDirectoryItem[]
+  count: number
+  source: string
+  last_synced_at: string | null
+  api_configured: boolean
+}
+
+export type MarketFilters = {
+  states: string[]
+  districts: string[]
+  markets: string[]
+  varieties: string[]
+  grades: string[]
+  latest_date: string | null
 }
 
 export type MarketOverview = {
@@ -59,203 +107,87 @@ export type MarketOverview = {
   best_market: string
   source_note: string
   freshness: string
-  consolidated: MarketConsolidated
-  top_markets: TopMarketItem[]
-  live_data: boolean
+  consolidated: ConsolidatedMarketReport
+  top_markets: MarketRank[]
   states: string[]
-}
-
-export type MarketStateOption = {
-  id: number
-  name: string
-  code: string | null
-  active: boolean
-  district_count: number
-  market_count: number
-}
-
-export type MarketDistrictOption = {
-  id: number
-  name: string
-  state: string
-  active: boolean
-  market_count: number
-}
-
-export type MandiDirectoryItem = {
-  id: number
-  name: string
-  state: string
-  district: string
-  source: string
-  active: boolean
-  latitude: number | null
-  longitude: number | null
-  external_market_name: string | null
-  external_id: string | null
-  updated_at: string
-}
-
-export type MandiDirectoryResponse = {
-  state: string | null
-  district: string | null
-  total: number
-  limit: number
-  offset: number
-  items: MandiDirectoryItem[]
-  source: string
   live_data: boolean
-  note: string | null
-}
-
-export type MarketFilters = {
-  states: string[]
-  districts: string[]
-  markets: string[]
-  commodities: string[]
-  varieties: string[]
-  grades: string[]
-  selected_state: string | null
-  selected_district: string | null
-  source: string | null
-  freshness: string | null
-}
-
-export type MarketTrendPoint = {
-  date: string
-  min_price: number
-  max_price: number
-  modal_price: number
-  average_price: number
-}
-
-export type MarketAnalyticsSummary = {
-  record_count: number
-  average_modal_price: number | null
-  minimum_price: number | null
-  maximum_price: number | null
-  latest_price: number | null
-  previous_price: number | null
-  change_amount: number | null
-  change_percent: number
-  direction: 'rising' | 'falling' | 'stable'
+  last_sync: {
+    id: number
+    source: string
+    resource_id: string
+    state: string | null
+    status: string
+    records_received: number
+    records_inserted: number
+    records_updated: number
+    error: string | null
+    started_at: string
+    finished_at: string | null
+  } | null
 }
 
 export type MarketAnalytics = {
-  state: string | null
+  state: string
   district: string | null
   market: string | null
-  commodity: string
   variety: string | null
   window_days: number
-  summary: MarketAnalyticsSummary
-  trend: MarketTrendPoint[]
+  daily_series: DailyPricePoint[]
+  rankings: MarketRank[]
+  forecast: ForecastPoint[]
+  current_average: number
+  change_percent_7d: number
+  change_percent_30d: number
+  volatility_percent: number
+  price_range: number
+  best_market: string
+  strongest_variety: string
+  data_points: number
+  market_count: number
+  confidence: 'low' | 'medium' | 'high'
+  methodology: string[]
+}
+
+export type NewsArticle = {
+  id: number
   source: string
+  title: string
+  summary: string
+  url: string
+  image_url: string | null
+  category: string
+  language: string
+  published_at: string | null
+  fetched_at: string
+}
+
+export type NewsResponse = {
+  articles: NewsArticle[]
+  categories: string[]
+  sources: string[]
   freshness: string
-  note: string | null
+  live_data: boolean
+  note: string
 }
 
-export type WeatherForecastDay = {
-  date: string
-  minimum_temperature: number
-  maximum_temperature: number
-  precipitation_probability: number
-}
-
-export type WeatherCurrent = {
+export type WeatherResponse = {
+  latitude: number
+  longitude: number
+  timezone: string
   current_temperature: number | null
   current_humidity: number | null
   current_wind_speed: number | null
   current_weather_code: number | null
-}
-
-export type WeatherResponse = {
-  current: WeatherCurrent
-  daily: WeatherForecastDay[]
+  daily: Array<{
+    date: string
+    weather_code: number
+    minimum_temperature: number
+    maximum_temperature: number
+    precipitation_probability: number
+    precipitation_mm: number
+  }>
+  fetched_at: string
   source: string
-}
-
-export type NewsItem = {
-  id: number | string
-  title: string
-  category?: string
-  source?: string
-  published_at?: string | null
-  url?: string
-}
-
-export type NewsResponse = {
-  items: NewsItem[]
-  articles?: NewsItem[]
-  total: number
-  source?: string
-  live_data?: boolean
-  note?: string | null
-}
-
-export type StoragePlanPayload = {
-  quantity_kg: number
-  current_price_per_quintal: number
-  expected_future_price_per_quintal?: number | null
-  storage_days: number
-  storage_cost_per_quintal_day: number
-  handling_cost_per_quintal?: number
-  transport_cost?: number
-  expected_loss_percent?: number
-  spoilage_percent?: number
-}
-
-export type StoragePlanResult = {
-  quantity_kg?: number
-  quantity_quintals?: number
-  current_revenue?: number
-  expected_future_revenue?: number
-  storage_cost?: number
-  handling_cost?: number
-  transport_cost?: number
-  spoilage_loss?: number
-  total_cost?: number
-  expected_profit?: number
-  net_gain?: number
-  roi?: number
-  recommended_action?: string
-  recommendation?: string
-  profitable?: boolean
-  break_even_price?: number
-  explanation?: string[]
-  warnings?: string[]
-}
-
-export type TransportPlanPayload = {
-  quantity_kg: number
-  distance_km: number
-  cost_per_km_tonne: number
-  loading_cost?: number
-  unloading_cost?: number
-  toll_cost?: number
-  other_cost?: number
-  vehicle_capacity_kg?: number
-  number_of_trips?: number
-}
-
-export type TransportPlanResult = {
-  quantity_kg?: number
-  quantity_tonnes?: number
-  distance_km?: number
-  number_of_trips?: number
-  transport_cost?: number
-  loading_cost?: number
-  unloading_cost?: number
-  toll_cost?: number
-  other_cost?: number
-  total_cost?: number
-  cost_per_kg?: number
-  cost_per_quintal?: number
-  recommended_vehicle?: string
-  recommended_action?: string
-  recommendation?: string
-  explanation?: string[]
-  warnings?: string[]
 }
 
 export type BatchImage = {
@@ -282,7 +214,37 @@ export type QualityAssessment = {
   surface_defect_severity: number
   confidence: number
   model_mode: string
-  feature_summary: Record<string, unknown>
+  feature_summary: {
+    images_analyzed?: number
+    independent_images?: number
+    duplicate_images_ignored?: number
+    duplicate_sets?: Array<{
+      sha256_prefix: string
+      copies: number
+    }>
+    potatoes_detected?: number
+    average_image_quality?: number
+    quality_score_stddev?: number
+    quality_score_range?: number
+    aggregation_method?: string
+    manual_review_required?: boolean
+    review_reasons?: string[]
+    vision_v1_images?: number
+    model_artifacts?: Record<string, {
+      stage?: string
+      architecture?: string
+      artifact?: string
+      format?: string
+      size_bytes?: number
+      sha256?: string
+      artifact_id?: string
+    }>
+    condition_distribution?: Record<string, number>
+    top_condition?: string | null
+    defect_area_percent?: Record<string, number>
+    explainability_mode?: string
+    [key: string]: unknown
+  }
 }
 
 export type Alternative = {
@@ -386,13 +348,133 @@ export type ModelStatusResponse = {
   }
 }
 
-export type MarketSyncResponse = {
-  state: string | null
-  received: number
-  inserted: number
-  updated: number
-  mandi_count: number
-  live_data: boolean
+export type StoragePlanPayload = {
+  quantity_kg: number
+  current_price_per_quintal: number
+  expected_price_per_quintal: number
+  storage_days: number
+  storage_cost_per_quintal_day: number
+  expected_loss_percent: number
+  handling_cost_per_quintal: number
+}
+
+export type StoragePlanResult = {
+  sell_now_revenue: number
+  stored_sale_revenue: number
+  storage_cost: number
+  handling_cost: number
+  expected_loss_value: number
+  net_storage_value: number
+  advantage_over_sell_now: number
+  recommendation: 'STORE' | 'SELL_NOW'
+  break_even_price_per_quintal: number
+}
+
+export type TransportPlanPayload = {
+  quantity_kg: number
+  distance_km: number
+  rate_per_km_tonne: number
+  loading_cost: number
+  unloading_cost: number
+  tolls_and_other: number
+}
+
+export type TransportPlanResult = {
+  tonnes: number
+  linehaul_cost: number
+  loading_cost: number
+  unloading_cost: number
+  tolls_and_other: number
+  total_cost: number
+  cost_per_quintal: number
+}
+
+export type TradeListing = {
+  id: number
+  listing_code: string
+  listing_type: 'BUY' | 'SELL'
+  owner_name: string
+  contact_phone: string | null
+  variety: string
+  quantity_kg: number
+  price_per_quintal: number
+  state: string
+  district: string
+  location: string
+  notes: string | null
+  status: 'ACTIVE' | 'CLOSED' | string
+  source_batch_id: number | null
+  quality_grade: string | null
+  quality_score: number | null
+  size_class: string | null
+  verified_quality: boolean
+  created_at: string
+  updated_at: string
+  is_favorite: boolean
+  is_owner: boolean
+  is_demo: boolean
+}
+
+export type TradeListingPage = {
+  items: TradeListing[]
+  next_cursor: string | null
+  total_returned: number
+}
+
+export type MarketplaceSummary = {
+  active_buy_posts: number
+  active_sell_posts: number
+  verified_quality_posts: number
+  varieties: string[]
+  states: string[]
+}
+
+export type TradeListingCreate = {
+  listing_type: 'BUY' | 'SELL'
+  owner_name: string
+  contact_phone?: string | null
+  variety: string
+  quantity_kg: number
+  price_per_quintal: number
+  state: string
+  district: string
+  location: string
+  notes?: string | null
+  source_batch_id?: number | null
+  size_class?: string | null
+}
+
+export type ColdStorageFacility = {
+  id: number
+  name: string
+  state: string
+  district: string
+  location: string
+  total_capacity_tonnes: number
+  available_capacity_tonnes: number
+  estimated_cost_per_quintal_day: number
+  phone: string | null
   source: string
-  note: string
+  verified: boolean
+}
+
+export type TransportProvider = {
+  id: number
+  name: string
+  state: string
+  district: string
+  base_location: string
+  vehicle_types: string[]
+  rate_per_km_tonne: number
+  phone: string | null
+  source: string
+  verified: boolean
+}
+
+export type AssistantReply = {
+  answer: string
+  mode: 'local_grounded' | 'openai_grounded'
+  sources: Array<{ title: string; kind: string; detail: string }>
+  suggestions: string[]
+  disclaimer: string
 }

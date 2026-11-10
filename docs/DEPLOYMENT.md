@@ -16,8 +16,6 @@ Frontend on Vercel:
 ```env
 VITE_API_URL=https://YOUR-API/api/v1
 VITE_MEDIA_URL=
-VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 ```
 
 Backend:
@@ -35,8 +33,6 @@ MODEL_MODE=cv_demo
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` in a `VITE_` variable.
-
-For the end-to-end local setup, including Google Auth provider configuration and redirect URLs, see `docs/SUPABASE_SETUP.md`.
 
 ## Database
 

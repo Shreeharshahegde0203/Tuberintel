@@ -100,14 +100,23 @@ class BatchListItem(BaseModel):
 
 
 class AnalysisOptions(BaseModel):
+    # TUBERINTEL QUALITY VALUE V1: explicit pricing assumptions.
+    quality_pricing_mode: Literal["estimated", "manual", "reference"] = "estimated"
+    fresh_buyer_price_per_quintal: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    buyer_quality_discount_percent: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    saleable_weight_percent: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
     language: Literal["en", "kn"] = "en"
     storage_cost_per_quintal_day: float = Field(default=8.0, ge=0)
     storage_days: int = Field(default=14, ge=0, le=180)
+    expected_storage_loss_percent: float | None = Field(default=None, ge=0, le=100)
     transport_cost_per_km_tonne: float = Field(default=42.0, ge=0)
     distance_km: float = Field(default=65.0, ge=0, le=5000)
     processor_price_per_quintal: float | None = Field(default=None, ge=0)
     handling_cost_per_quintal: float = Field(default=35.0, ge=0)
     target_margin_percent: float = Field(default=10.0, ge=0, le=100)
+    measured_length_mm: float | None = Field(default=None, gt=0, le=500)
+    measured_width_mm: float | None = Field(default=None, gt=0, le=500)
+    measurement_source: Literal["not_available", "manual", "potato_ruler", "calibrated_image"] = "not_available"
 
 
 class FeedbackCreate(BaseModel):

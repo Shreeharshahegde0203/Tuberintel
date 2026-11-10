@@ -28,7 +28,7 @@ export function LoadingState({ label }: { label?: string }) {
 
 export function ErrorState({ message, retry }: { message: string; retry?: () => void }) {
   const { t } = useI18n()
-  return <div className="state-panel state-error"><AlertTriangle size={28} /><strong>{t('common.unable')}</strong><p>{humanizeError(message)}</p>{retry && <button className="button button-secondary" onClick={retry}>{t('common.retry')}</button>}</div>
+  return <div className="state-panel state-error"><AlertTriangle size={28} /><strong>{t('common.unable')}</strong><p>{message}</p>{retry && <button className="button button-secondary" onClick={retry}>{t('common.retry')}</button>}</div>
 }
 
 export function EmptyState({ title, description, actionLabel, actionTo }: { title: string; description: string; actionLabel?: string; actionTo?: string }) {
@@ -43,14 +43,4 @@ export function MetricBar({ label, value, inverse = false }: { label: string; va
   const safe = Math.max(0, Math.min(100, value))
   const level = inverse ? 100 - safe : safe
   return <div className="metric-bar-row"><div className="metric-bar-label"><span>{label}</span><strong>{safe.toFixed(1)}</strong></div><div className="metric-track"><span style={{ width: `${safe}%` }} data-level={level < 45 ? 'low' : level < 75 ? 'medium' : 'high'} /></div></div>
-}
-
-function humanizeError(message: string) {
-  if (/network ?error/i.test(message)) {
-    return 'The backend API is not reachable. Start the FastAPI server and verify VITE_API_URL points to it.'
-  }
-  if (/failed to fetch/i.test(message)) {
-    return 'The backend API did not respond. Check that the backend is running and accessible from the frontend.'
-  }
-  return message
 }

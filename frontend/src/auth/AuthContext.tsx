@@ -1,125 +1,292 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createClient, type Session, type User } from '@supabase/supabase-js'
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import type { Session, User } from '@supabase/supabase-js'
+import { supabase } from './supabase'
 
 export type AuthUser = {
   id: string
-  email: string
-  name: string
-  avatarUrl: string
+  phone: string
+  name?: string
+  email?: string
+  avatarUrl?: string
 }
 
 type AuthContextValue = {
   user: AuthUser | null
-  session: Session | null
   loading: boolean
-  configured: boolean
+  mode: 'demo' | 'supabase'
+  sendOtp: (phone: string) => Promise<void>
+  verifyOtp: (phone: string, token: string) => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+const storageKey = 'tuberintel-session'
 
-const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '').trim()
-const supabaseKey = String(
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-).trim()
+function normalizedPhone(phone: string) {
+  const digits = phone.replace(/\D/g, '')
 
-const configured = Boolean(
-  supabaseUrl &&
-    supabaseKey &&
-    !supabaseUrl.includes('YOUR_PROJECT_ID') &&
-    !supabaseKey.includes('YOUR_PUBLISHABLE_KEY'),
-)
+  if (digits.length === 10) return `+91${digits}`
+  if (digits.startsWith('91') && digits.length === 12) return `+${digits}`
 
-const supabase = configured ? createClient(supabaseUrl, supabaseKey) : null
+  return phone.startsWith('+') ? phone : `+${digits}`
+}
 
-function toAuthUser(user: User | null): AuthUser | null {
-  if (!user) return null
+function readUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(storageKey)
 
-  const metadata = user.user_metadata || {}
-  return {
-    id: user.id,
-    email: user.email || '',
-    name: String(metadata.full_name || metadata.name || user.email?.split('@')[0] || 'TuberIntel user'),
-    avatarUrl: String(metadata.avatar_url || metadata.picture || ''),
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw) as {
+      user?: AuthUser
+      expires_at?: number
+    }
+
+    if (parsed.expires_at && parsed.expires_at * 1000 < Date.now()) {
+      localStorage.removeItem(storageKey)
+      return null
+    }
+
+    return parsed.user ?? null
+  } catch {
+    localStorage.removeItem(storageKey)
+    return null
   }
 }
 
+function mapSupabaseUser(user: User): AuthUser {
+  const metadata = user.user_metadata || {}
+
+  return {
+    id: user.id,
+    phone: user.phone || '',
+    email: user.email || undefined,
+    name:
+      metadata.full_name ||
+      metadata.name ||
+      user.email?.split('@')[0] ||
+      'Farmer',
+    avatarUrl:
+      metadata.avatar_url ||
+      metadata.picture ||
+      undefined,
+  }
+}
+
+function persistSupabaseSession(session: Session | null): AuthUser | null {
+  if (!session) {
+    localStorage.removeItem(storageKey)
+    return null
+  }
+
+  const appUser = mapSupabaseUser(session.user)
+
+  localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      user: appUser,
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_at: session.expires_at,
+    }),
+  )
+
+  return appUser
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [user, setUser] = useState<AuthUser | null>(null)
-  const [loading, setLoading] = useState(true)
+  const mode = (
+    import.meta.env.VITE_AUTH_MODE === 'supabase'
+      ? 'supabase'
+      : 'demo'
+  ) as 'demo' | 'supabase'
+
+  const [user, setUser] = useState<AuthUser | null>(() =>
+    mode === 'demo' ? readUser() : null,
+  )
+
+  const [loading, setLoading] = useState(mode === 'supabase')
 
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false)
-      return
-    }
+    if (mode !== 'supabase') return
 
     let mounted = true
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return
-      setSession(data.session)
-      setUser(toAuthUser(data.session?.user ?? null))
-      setLoading(false)
-    })
+    const restoreSession = async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      setUser(toAuthUser(nextSession?.user ?? null))
+        if (error) throw error
+
+        if (mounted) {
+          setUser(persistSupabaseSession(session))
+        }
+      } catch {
+        if (mounted) {
+          localStorage.removeItem(storageKey)
+          setUser(null)
+        }
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+
+    void restoreSession()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return
+
+      setUser(persistSupabaseSession(session))
       setLoading(false)
     })
 
     return () => {
       mounted = false
-      listener.subscription.unsubscribe()
+      subscription.unsubscribe()
     }
-  }, [])
+  }, [mode])
 
-  const signInWithGoogle = async () => {
-    if (!supabase) {
-      throw new Error('Google Sign-In is not configured. Add your Supabase project URL and publishable key to frontend/.env.local.')
+  const sendOtp = async (phone: string) => {
+    const value = normalizedPhone(phone)
+
+    if (!/^\+\d{10,15}$/.test(value)) {
+      throw new Error('Enter a valid mobile number')
+    }
+
+    if (mode === 'demo') {
+      sessionStorage.setItem('tuberintel-demo-phone', value)
+      return
     }
 
     setLoading(true)
+
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/`,
-        },
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: value,
       })
+
       if (error) throw error
     } finally {
       setLoading(false)
     }
   }
 
-  const signOut = async () => {
-    if (supabase) {
-      const { error } = await supabase.auth.signOut()
-      if (error) throw error
+  const verifyOtp = async (phone: string, token: string) => {
+    const value = normalizedPhone(phone)
+
+    if (mode === 'demo') {
+      if (token !== '123456') {
+        throw new Error('For local demo use OTP 123456')
+      }
+
+      const demoUser: AuthUser = {
+        id: `demo-${value}`,
+        phone: value,
+        name: 'Farmer',
+      }
+
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          user: demoUser,
+          expires_at: Math.floor(Date.now() / 1000) + 86400 * 30,
+        }),
+      )
+
+      setUser(demoUser)
+      return
     }
-    setSession(null)
-    setUser(null)
+
+    setLoading(true)
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone: value,
+        token,
+        type: 'sms',
+      })
+
+      if (error) throw error
+      if (!data.session) throw new Error('OTP verification failed')
+
+      setUser(persistSupabaseSession(data.session))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const signInWithGoogle = async () => {
+    if (mode !== 'supabase') {
+      throw new Error('Google authentication requires Supabase auth mode')
+    }
+
+    setLoading(true)
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/login`,
+      },
+    })
+
+    if (error) {
+      setLoading(false)
+      throw error
+    }
+  }
+
+  const signOut = async () => {
+    try {
+      if (mode === 'supabase') {
+        await supabase.auth.signOut()
+      }
+    } finally {
+      localStorage.removeItem(storageKey)
+      sessionStorage.removeItem('tuberintel-demo-phone')
+      setUser(null)
+    }
   }
 
   const value = useMemo(
-    () => ({ user, session, loading, configured, signInWithGoogle, signOut }),
-    [user, session, loading],
+    () => ({
+      user,
+      loading,
+      mode,
+      sendOtp,
+      verifyOtp,
+      signInWithGoogle,
+      signOut,
+    }),
+    [user, loading, mode],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {
   const value = useContext(AuthContext)
-  if (!value) throw new Error('useAuth must be used inside AuthProvider')
-  return value
-}
 
-export function getAccessToken() {
-  return supabase?.auth.getSession().then(({ data }) => data.session?.access_token ?? null) ?? Promise.resolve(null)
+  if (!value) {
+    throw new Error('useAuth must be used inside AuthProvider')
+  }
+
+  return value
 }
