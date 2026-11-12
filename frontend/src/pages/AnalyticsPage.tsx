@@ -1,4 +1,3 @@
-import { createPriceAnalyticsTranslator } from '../i18n/priceAnalyticsLabels'
 import {
   Activity,
   AlertTriangle,
@@ -53,9 +52,7 @@ export default function AnalyticsPage() {
 
   const [error, setError] = useState('')
 
-  const { language, locale, t: appT } = useI18n()
-  // TUBERINTEL PRICE ANALYTICS LABELS V1
-  const t = createPriceAnalyticsTranslator(language, appT)
+  const { language, locale, t } = useI18n()
   const load = async () => {
     setError('')
 

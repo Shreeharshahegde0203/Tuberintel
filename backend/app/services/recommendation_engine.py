@@ -157,8 +157,8 @@ class RecommendationEngine:
         # marketable weight loss. Without that assumption the route is shown but
         # is not allowed to win the ranking.
         storage_days = int(options.storage_days)
-        forecast_index = min(max(storage_days - 1, 0), len(forecast) - 1) if forecast else 0
-        future_base = float(forecast[forecast_index]["predicted_price"]) if forecast else base_modal
+        forecast_prices = {point.get("horizon_days", index): float(point["predicted_price"]) for index, point in enumerate(forecast, 1)}
+        future_base = forecast_prices.get(storage_days, 0.0)
         store_gross = future_base * quintals if market_available else 0.0
         storage_cost = float(options.storage_cost_per_quintal_day) * quintals * storage_days
         store_loss_value = store_gross * (storage_loss or 0.0) / 100.0
@@ -178,7 +178,7 @@ class RecommendationEngine:
             + float(assessment.discoloration_severity) * 0.12
             + storage_days * 0.45
         )
-        store_eligible = market_available and storage_days > 0 and storage_loss is not None
+        store_eligible = market_available and future_base > 0 and storage_loss is not None
         candidates.append(
             self._candidate(
                 action="STORE",
@@ -211,8 +211,8 @@ class RecommendationEngine:
                     ),
                 ],
                 eligible=store_eligible,
-                assumption_status="Storage loss supplied" if store_eligible else "Storage loss % required to rank STORE",
-                price_source="Selected-market forecast" if forecast else market_source,
+                assumption_status="Forecast and storage loss supplied" if store_eligible else "Matching forecast and storage loss % required",
+                price_source="Selected-market forecast" if future_base else "Forecast unavailable",
             )
         )
 
@@ -276,8 +276,7 @@ class RecommendationEngine:
         # WAIT: short holding scenario. Apply the same explicit storage-loss
         # assumption proportionally to the shorter holding period.
         wait_days = min(7, max(1, storage_days // 2 if storage_days else 3))
-        wait_index = min(wait_days - 1, len(forecast) - 1) if forecast else 0
-        wait_price = float(forecast[wait_index]["predicted_price"]) if forecast else base_modal
+        wait_price = forecast_prices.get(wait_days, 0.0)
         wait_gross = wait_price * quintals if market_available else 0.0
         if storage_loss is not None and storage_days > 0:
             wait_loss_pct = storage_loss * wait_days / storage_days
@@ -299,7 +298,7 @@ class RecommendationEngine:
             + float(assessment.rejection_probability) * 0.20
             + wait_days * 0.55
         )
-        wait_eligible = market_available and storage_loss is not None
+        wait_eligible = market_available and wait_price > 0 and storage_loss is not None
         candidates.append(
             self._candidate(
                 action="WAIT",
@@ -327,8 +326,8 @@ class RecommendationEngine:
                     ),
                 ],
                 eligible=wait_eligible,
-                assumption_status="Holding loss supplied" if wait_eligible else "Storage loss % required to rank WAIT",
-                price_source="Selected-market forecast" if forecast else market_source,
+                assumption_status="Forecast and holding loss supplied" if wait_eligible else "Matching forecast and storage loss % required",
+                price_source="Selected-market forecast" if wait_price else "Forecast unavailable",
             )
         )
 

@@ -244,6 +244,8 @@ def analyze_batch(
     if not batch.images:
         raise HTTPException(status_code=400, detail="Upload at least one image before analysis")
 
+    # The connector commits or rolls back independently of assessment writes.
+    ensure_web_prices(db, state=batch.state)
     analyzer = PotatoImageAnalyzer(settings.model_mode)
     analyses = []
     errors: list[str] = []
@@ -278,11 +280,11 @@ def analyze_batch(
         if width_mm < 40:
             size_class = "S (<40 mm)"
         elif width_mm < 60:
-            size_class = "M (40â€“59 mm)"
+            size_class = "M (40–59 mm)"
         elif width_mm < 80:
-            size_class = "L (60â€“79 mm)"
+            size_class = "L (60–79 mm)"
         else:
-            size_class = "XL (â‰¥80 mm)"
+            size_class = "XL (≥80 mm)"
         summary = dict(aggregated.get("feature_summary") or {})
         summary["physical_measurement"] = {
             "length_mm": round(float(length_mm), 1),
@@ -296,8 +298,10 @@ def analyze_batch(
         aggregated["feature_summary"] = summary
     else:
         summary = dict(aggregated.get("feature_summary") or {})
-        summary.setdefault("size_class", "Relative size only â€” physical calibration not supplied")
+        summary.setdefault("size_class", "Relative size only — physical calibration not supplied")
         aggregated["feature_summary"] = summary
+    latest_markets, forecast, market_snapshot = market_service.analysis_market_inputs(db, batch)
+    aggregated["feature_summary"]["market_snapshot"] = market_snapshot
     if batch.assessment:
         for key, value in aggregated.items():
             setattr(batch.assessment, key, value)
@@ -308,17 +312,6 @@ def analyze_batch(
         db.add(assessment)
     db.flush()
 
-    latest_markets = market_service.latest_prices(db, state=batch.state)
-    forecast_payload = market_service.forecast_detailed(
-        db,
-        state=batch.state,
-        district=batch.district,
-        market=batch.intended_market,
-        variety=batch.variety,
-        horizon_days=settings.price_forecast_max_horizon_days,
-        persist=True,
-    )
-    forecast = forecast_payload["points"]
     recommendation_payload = recommendation_engine.evaluate(batch, assessment, latest_markets, forecast, options)
     if batch.recommendation:
         for key, value in recommendation_payload.items():
@@ -643,7 +636,7 @@ def potato_news(
     refresh: bool = False,
     db: Session = Depends(get_db),
 ) -> dict:
-    return news_service.list(db, category=category, search=search, limit=limit, auto_refresh=refresh or True)
+    return news_service.list(db, category=category, search=search, limit=limit, force_refresh=refresh)
 
 
 @router.post("/news/refresh")

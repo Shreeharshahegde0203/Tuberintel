@@ -43,11 +43,12 @@ export const MARKET_COORDINATES: Record<string, { latitude: number; longitude: n
 export const DEFAULT_MARKET_LOCATION: MarketLocation = {
   state: 'Karnataka',
   district: 'Bengaluru',
-  market: 'Bengaluru APMC',
+  market: 'Bangalore APMC (published aggregate)',
 }
 
 const REMOVED_MARKETS = new Set([
   'Binny Mill (F&V), Bengaluru',
+  'Bengaluru APMC',
 ])
 
 export function readMarketLocation(): MarketLocation {
@@ -68,7 +69,7 @@ export function readMarketLocation(): MarketLocation {
     localStorage.getItem('tuberintel-market') ||
     DEFAULT_MARKET_LOCATION.market
 
-  if (REMOVED_MARKETS.has(storedMarket)) {
+  if (storedState === DEFAULT_MARKET_LOCATION.state && REMOVED_MARKETS.has(storedMarket)) {
     const migrated = {
       ...DEFAULT_MARKET_LOCATION,
     }
@@ -85,7 +86,7 @@ export function readMarketLocation(): MarketLocation {
   return {
     state: storedState,
     district: storedDistrict,
-    market: storedMarket,
+    market: storedState !== DEFAULT_MARKET_LOCATION.state && (REMOVED_MARKETS.has(storedMarket) || !localStorage.getItem('tuberintel-market')) ? '' : storedMarket,
   }
 }
 

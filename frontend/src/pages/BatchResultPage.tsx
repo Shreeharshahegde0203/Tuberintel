@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   TrendingUp,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ErrorState, LoadingState, MetricBar, PageHeader, StatusBadge } from '../components/Common'
@@ -33,15 +33,21 @@ export default function BatchResultPage() {
   const { language, t } = useI18n()
   const [feedback, setFeedback] = useState({ action_taken: '', actual_price_per_quintal: '', actual_profit: '', rating: '5', notes: '' })
 
-  const load = () => {
+  const load = useCallback((signal?: AbortSignal) => {
     if (!batchId) return
     setError('')
-    getBatch(Number(batchId)).then(setBatch).catch((err) => setError(err?.response?.data?.detail || err.message))
-  }
+    getBatch(Number(batchId), signal)
+      .then((result) => { if (!signal?.aborted) setBatch(result) })
+      .catch((err) => { if (!signal?.aborted) setError(err?.response?.data?.detail || err.message) })
+  }, [batchId])
 
-  useEffect(load, [batchId])
+  useEffect(() => {
+    const controller = new AbortController()
+    load(controller.signal)
+    return () => controller.abort()
+  }, [load])
 
-  const comparison = useMemo(() => batch?.recommendation?.alternatives.map((item) => ({
+  const comparison = useMemo(() => batch?.recommendation?.alternatives.filter((item) => item.eligible !== false).map((item) => ({
     name: actionLabel(item.action, language),
     profit: item.net_profit,
     risk: item.risk_score,
@@ -52,9 +58,9 @@ export default function BatchResultPage() {
     return translated.startsWith('cost.') ? key.replaceAll('_', ' ') : translated
   }
 
-  if (error) return <ErrorState message={String(error)} retry={load} />
-  if (!batch) return <LoadingState />
-  if (!batch.assessment || !batch.recommendation) {
+  if (error) return <ErrorState message={String(error)} retry={() => load()} />
+  if (!batch || String(batch.id) !== batchId) return <LoadingState />
+  if (batch.status !== 'analyzed' || !batch.assessment || !batch.recommendation) {
     return (
       <div>
         <PageHeader title={batch.batch_code} description={t('result.notComplete')} />
@@ -146,6 +152,11 @@ export default function BatchResultPage() {
     }
   }
 
+  const marketSnapshot = assessment.feature_summary.market_snapshot as {
+    analyzed_at: string; reporting_date: string | null; status: 'recent' | 'stale' | 'unavailable';
+  } | undefined
+  const hasRecommendation = rec.alternatives.some((option) => option.eligible !== false)
+
   const qualityValuation = assessment.feature_summary.quality_valuation as {
     reference_price_per_quintal: number; effective_value_per_original_kg: number;
     applied_factor: number; accepted_weight_factor: number; status: string;
@@ -171,7 +182,17 @@ export default function BatchResultPage() {
         actions={<div className="button-row"><Link className="button button-secondary" to="/history"><ArrowLeft size={19} /> {t('common.history')}</Link><button className="button button-secondary" onClick={downloadJson}><Download size={19} /> {t('common.exportJson')}</button></div>}
       />
 
-      <section className={`recommendation-hero action-${actionTone[rec.recommended_action] || 'sell'}`}>
+      <section className="panel form-section">
+        <h2>Market data at inspection</h2>
+        {marketSnapshot ? <p>
+          {marketSnapshot.status === 'recent' && `Mandi reporting date: ${marketSnapshot.reporting_date}.`}
+          {marketSnapshot.status === 'stale' && `Mandi report from ${marketSnapshot.reporting_date} was too old to use.`}
+          {marketSnapshot.status === 'unavailable' && 'No usable mandi report was available for the selected market and variety.'}
+          {' '}Run a new inspection for updated pricing.
+        </p> : <p>This saved inspection has no recorded market freshness. Run a new inspection for updated pricing.</p>}
+      </section>
+
+      {hasRecommendation ? <section className={`recommendation-hero action-${actionTone[rec.recommended_action] || 'sell'}`}>
         <div className="recommendation-main">
           <span className="recommendation-label"><CheckCircle2 size={16} /> {t('result.recommended')}</span>
           <h2>{actionLabel(rec.recommended_action, language)}</h2>
@@ -189,8 +210,10 @@ export default function BatchResultPage() {
         </div>
       </section>
 
+      : <section className="panel form-section"><h2>Pricing inputs needed</h2><p>Provide a current buyer quote or select a market with a recent report.</p></section>}
+
       {/* TUBERINTEL QUALITY VALUE V1 */}
-      {qualityValuation && <section className="panel form-section">
+      {hasRecommendation && qualityValuation && <section className="panel form-section">
         <div className="panel-heading"><div><span className="panel-kicker">{qualityValuation.status}</span><h2>{language === 'kn' ? 'ಗುಣಮಟ್ಟ ಆಧಾರಿತ ಬ್ಯಾಚ್ ಮೌಲ್ಯ' : 'Quality-adjusted batch value'}</h2></div></div>
         <div className="form-grid two-col">
           <p>{language === 'kn' ? 'ಉಲ್ಲೇಖ / quote ದರ' : 'Reference / quoted price'}: <strong>{formatCurrency(qualityValuation.reference_price_per_quintal / 100, 2, language)}/kg</strong></p>
@@ -512,18 +535,19 @@ export default function BatchResultPage() {
         <div className="panel-heading"><div><span className="panel-kicker">{t('result.allOptions')}</span><h2>{t('result.decisionRanking')}</h2></div></div>
         <div className="alternative-grid">
           {rec.alternatives.map((alt, index) => (
-            <article key={alt.action} className={index === 0 ? 'best-alternative' : ''}>
+            <article key={alt.action} className={index === 0 && alt.eligible !== false ? 'best-alternative' : ''}>
               <div className="alternative-top"><span>{index + 1}</span><StatusBadge value={actionLabel(alt.action, language)} /></div>
               <h3>{alt.title}</h3>
               <p>{alt.market}</p>
-              <div className="alternative-profit">{formatCurrency(alt.net_profit, 0, language)}</div>
+              <div className="alternative-profit">{alt.eligible === false ? alt.assumption_status || 'Pricing inputs needed' : formatCurrency(alt.net_profit, 0, language)}</div>
+              {alt.price_source && <p>{alt.price_source}</p>}
               <div className="alternative-stats"><span><TrendingUp size={15} /> {t('result.roi')} {alt.roi.toFixed(1)}%</span><span><ShieldCheck size={15} /> {t('result.risk')} {alt.risk_score.toFixed(0)}</span></div>
             </article>
           ))}
         </div>
       </section>
 
-      <footer className="result-footer">{t('result.analysisGenerated')} {formatDate(batch.updated_at, language)} · {assessment.feature_summary.images_analyzed || batch.images.length} {t('result.images')} · {assessment.feature_summary.potatoes_detected || '—'} {t('result.potatoRegions')}</footer>
+      <footer className="result-footer">{t('result.analysisGenerated')} {formatDate(marketSnapshot?.analyzed_at || batch.updated_at, language)} · {assessment.feature_summary.images_analyzed || batch.images.length} {t('result.images')} · {assessment.feature_summary.potatoes_detected || '—'} {t('result.potatoRegions')}</footer>
     </>
   )
 }

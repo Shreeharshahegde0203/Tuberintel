@@ -14,11 +14,10 @@ dist/
 .env
 *.pt
 *.pth
-*.ts
+/ml/artifacts/
 *.onnx
 *.joblib
 ml/runs/
-ml/artifacts/
 
 # Editors / OS
 .vscode/

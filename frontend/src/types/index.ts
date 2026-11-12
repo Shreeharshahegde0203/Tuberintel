@@ -260,6 +260,9 @@ export type Alternative = {
   confidence: number
   costs: Record<string, number>
   reasons: string[]
+  eligible?: boolean
+  assumption_status?: string
+  price_source?: string
 }
 
 export type Recommendation = {

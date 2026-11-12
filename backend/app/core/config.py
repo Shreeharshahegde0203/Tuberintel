@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     agmarknet_sync_months: int = 2
     agmarknet_potato_commodity_id: int = 24
     market_cache_minutes: int = 60
+    analysis_market_max_age_days: int = Field(default=7, ge=0)
     market_page_size: int = 500
     market_max_pages: int = 8
     market_directory_max_pages: int = 80

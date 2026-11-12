@@ -3,6 +3,7 @@ import math
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.session import Base, SessionLocal, engine
 from app.models import ColdStorageFacility, MarketPrice, TradeListing, TransportProvider
 from app.services.market_service import MarketService
@@ -72,9 +73,7 @@ def init_db() -> None:
     with SessionLocal() as db:
         market_service.seed_state_directory(db)
         db.commit()
-        existing = db.scalar(select(MarketPrice.id).limit(1))
-        # Public web prices replace automatic synthetic market-price seeding.
-        pass
         market_service.bootstrap_directory_from_prices(db)
-        _seed_marketplace(db)
+        if get_settings().environment != "production":
+            _seed_marketplace(db)
         db.commit()

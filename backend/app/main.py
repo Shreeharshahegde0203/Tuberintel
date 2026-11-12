@@ -38,6 +38,8 @@ app.add_middleware(
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
     response = await call_next(request)
+    if request.url.path.startswith(f"{settings.api_prefix}/"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
+from zoneinfo import ZoneInfo
 from typing import Any, Iterable
 
 import httpx
@@ -625,6 +626,41 @@ class MarketService:
             "latest_date": db.scalar(select(func.max(MarketPrice.arrival_date)).where(*price_conditions)),
         }
 
+    def analysis_market_inputs(self, db: Session, batch: Any) -> tuple[list[MarketPrice], list[dict], dict]:
+        """Build a dated market snapshot for this inspection's selected market."""
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        earliest = today - timedelta(days=self.settings.analysis_market_max_age_days)
+        variety = batch.variety
+        if (variety or "").strip().casefold() in {"", "unspecified", "not specified", "local"}:
+            variety = None
+        scope = {
+            "state": batch.state,
+            "market": batch.intended_market,
+            "district": None if batch.intended_market else batch.district,
+            "variety": variety,
+        }
+        prices = self.list_prices(db, **scope, date_to=today, latest_only=True)
+        prices = [row for row in prices if row.modal_price > 0]
+        latest_date = prices[0].arrival_date if prices else None
+        current = latest_date is not None and latest_date >= earliest
+        forecast = []
+        if current:
+            forecast = self.forecast_detailed(
+                db, **scope, horizon_days=self.settings.price_forecast_max_horizon_days,
+                persist=True, as_of=today,
+            )["points"]
+            forecast = [
+                {**point, "horizon_days": (point["date"] - today).days}
+                for point in forecast if point["date"] > today
+            ]
+        snapshot = {
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "reporting_date": latest_date.isoformat() if latest_date else None,
+            "status": "recent" if current else "stale" if latest_date else "unavailable",
+            "max_age_days": self.settings.analysis_market_max_age_days,
+        }
+        return prices if current else [], forecast, snapshot
+
     def latest_prices(self, db: Session, state: str = "Karnataka", limit: int = 12) -> list[MarketPrice]:
         return self.list_prices(db, state=state, latest_only=True, limit=limit)
 
@@ -696,9 +732,10 @@ class MarketService:
         district: str | None = None,
         market: str | None = None,
         variety: str | None = None,
+        as_of: date | None = None,
     ) -> list[MarketPrice]:
         conditions = self._conditions(
-            state=state, district=district, market=market, variety=variety
+            state=state, district=district, market=market, variety=variety, date_to=as_of
         )
         latest_date = db.scalar(select(func.max(MarketPrice.arrival_date)).where(*conditions))
         if not latest_date:
@@ -721,6 +758,7 @@ class MarketService:
         market: str | None = None,
         variety: str | None = None,
         persist: bool = False,
+        as_of: date | None = None,
     ) -> dict[str, Any]:
         """Return an operational price forecast with provenance and diagnostics.
 
@@ -734,7 +772,7 @@ class MarketService:
                 f"Operational numeric forecasts support 1-{self.settings.price_forecast_max_horizon_days} days only"
             )
         rows = self._forecast_history_rows(
-            db, state=state, district=district, market=market, variety=variety
+            db, state=state, district=district, market=market, variety=variety, as_of=as_of
         )
         result = self.forecast_engine.forecast(rows, requested)
         if persist and result.points:

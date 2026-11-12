@@ -973,3 +973,9 @@ td strong { font-weight: 650; }
   text-decoration-thickness: 2px;
 }
 
+
+.news-main-column { align-content: start; min-width: 0; }
+.news-card-copy h2 { margin: 4px 0; font-size: 1rem; line-height: 1.4; overflow-wrap: anywhere; }
+.news-card-copy p { font-size: 0.875rem; }
+.news-card-copy > div { gap: 8px; margin-top: 8px; }
+.news-card:focus-visible { outline-offset: -3px; }

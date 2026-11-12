@@ -27,7 +27,7 @@ import type {
 
 const apiBase = import.meta.env.VITE_API_URL || '/api/v1'
 
-export const mediaBase = import.meta.env.VITE_MEDIA_URL || ''
+export const mediaBase = import.meta.env.VITE_MEDIA_URL || (apiBase.startsWith('http') ? new URL(apiBase).origin : '')
 
 export const api = axios.create({
   baseURL: apiBase,
@@ -66,6 +66,7 @@ export type AnalysisOptionsPayload = {
   saleable_weight_percent?: number | null
   storage_cost_per_quintal_day: number
   storage_days: number
+  expected_storage_loss_percent?: number | null
   transport_cost_per_km_tonne: number
   distance_km: number
   processor_price_per_quintal?: number | null
@@ -101,8 +102,8 @@ export async function analyzeBatch(batchId: number, options: AnalysisOptionsPayl
   return data
 }
 
-export async function getBatch(batchId: number) {
-  const { data } = await api.get<Batch>(`/batches/${batchId}`)
+export async function getBatch(batchId: number, signal?: AbortSignal) {
+  const { data } = await api.get<Batch>(`/batches/${batchId}`, { signal })
   return data
 }
 
@@ -186,8 +187,8 @@ export async function refreshMarket(state = 'Karnataka', district?: string) {
   return data
 }
 
-export async function getNews(params: { category?: string; search?: string; limit?: number; refresh?: boolean } = {}) {
-  const { data } = await api.get<NewsResponse>('/news', { params })
+export async function getNews(params: { category?: string; search?: string; limit?: number; refresh?: boolean } = {}, signal?: AbortSignal) {
+  const { data } = await api.get<NewsResponse>('/news', { params, signal })
   return data
 }
 

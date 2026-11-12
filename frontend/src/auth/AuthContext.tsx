@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { getSupabase } from './supabase'
 
 export type AuthUser = {
   id: string
@@ -118,6 +118,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (mode !== 'supabase') return
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      setLoading(false)
+      return
+    }
+    const supabase = getSupabase()
 
     let mounted = true
 
@@ -175,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     try {
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error } = await getSupabase().auth.signInWithOtp({
         phone: value,
       })
 
@@ -214,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
 
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
+      const { data, error } = await getSupabase().auth.verifyOtp({
         phone: value,
         token,
         type: 'sms',
@@ -236,7 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setLoading(true)
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await getSupabase().auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/login`,
@@ -252,7 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       if (mode === 'supabase') {
-        await supabase.auth.signOut()
+        await getSupabase().auth.signOut()
       }
     } finally {
       localStorage.removeItem(storageKey)

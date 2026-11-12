@@ -136,7 +136,7 @@ def apply_valuation(result: dict[str, Any], assessment: Any, batch: Any, options
             # The processor's quality-specific quote already incorporates price terms.
             factor = audit["accepted_weight_factor"]
             usable = True
-            route_audit.update(status="Processor quote supplied; no second quality discount", calibration_status="user_supplied_terms", usable=True)
+            route_audit.update(status="Processor quote supplied; no second quality discount" if reference_eligible else "Processor quote required", calibration_status="user_supplied_terms" if reference_eligible else "quote_unavailable", usable=reference_eligible)
         else:
             usable = audit["usable"]
             if candidate["action"] == "SELL_NOW" and audit["fresh_quote_per_quintal"] is not None:

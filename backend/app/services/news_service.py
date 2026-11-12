@@ -5,14 +5,18 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from threading import Lock
 from urllib.parse import urlparse
 
 import httpx
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import NewsArticle
+
+
+_refresh_lock = Lock()
 
 
 class NewsService:
@@ -33,7 +37,11 @@ class NewsService:
             dt = parsedate_to_datetime(raw)
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
         except (TypeError, ValueError, OverflowError):
-            return None
+            try:
+                dt = datetime.fromisoformat(raw)
+                return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
 
     @staticmethod
     def _category(title: str, summary: str) -> str:
@@ -85,7 +93,7 @@ class NewsService:
             source = self._strip_html(self._text(entry, ("source",)))
             if not source:
                 source = urlparse(url).netloc.replace("www.", "") or "Potato industry source"
-            if title and url:
+            if title and urlparse(url).scheme in {"http", "https"} and urlparse(url).hostname:
                 output.append(
                     {
                         "title": title,
@@ -106,6 +114,10 @@ class NewsService:
         return datetime.now(timezone.utc) - latest >= timedelta(minutes=self.settings.news_cache_minutes)
 
     def refresh(self, db: Session, limit_per_feed: int = 30) -> dict[str, object]:
+        with _refresh_lock:
+            return self._refresh(db, limit_per_feed)
+
+    def _refresh(self, db: Session, limit_per_feed: int = 30) -> dict[str, object]:
         received = inserted = updated = 0
         errors: list[str] = []
         seen_urls: set[str] = set()
@@ -187,7 +199,7 @@ class NewsService:
             "updated": updated,
             "errors": errors,
             "live_data": received > 0,
-            "note": "Potato-news headlines refreshed. Full articles remain on the original publisher websites.",
+            "note": "Headlines updated from source feeds." if received else "Feeds returned no new data. Showing saved headlines if available.",
         }
 
     def list(
@@ -198,19 +210,22 @@ class NewsService:
         search: str | None = None,
         limit: int = 30,
         auto_refresh: bool = True,
+        force_refresh: bool = False,
     ) -> dict[str, object]:
         note = "Showing cached potato-industry headlines."
         live_data = False
-        if auto_refresh and self.needs_refresh(db):
+        if force_refresh or (auto_refresh and self.needs_refresh(db)):
             try:
-                result = self.refresh(db)
-                live_data = bool(result["live_data"])
-                note = str(result["note"])
-                if result["errors"]:
-                    note += " Some sources were temporarily unavailable."
-            except Exception as exc:
+                with _refresh_lock:
+                    result = self._refresh(db) if force_refresh or self.needs_refresh(db) else None
+                if result is not None:
+                    live_data = bool(result["live_data"])
+                    note = str(result["note"])
+                    if result["errors"]:
+                        note += " Some sources were temporarily unavailable."
+            except Exception:
                 db.rollback()
-                note = f"Live news refresh was unavailable; showing cached headlines. {exc}"
+                note = "News feeds could not be refreshed. Showing saved headlines if available."
 
         conditions = []
         if category:
@@ -224,12 +239,14 @@ class NewsService:
         articles = list(db.scalars(query))
         categories = [str(v) for v in db.scalars(select(NewsArticle.category).distinct().order_by(NewsArticle.category)) if v]
         sources = [str(v) for v in db.scalars(select(NewsArticle.source).distinct().order_by(NewsArticle.source)) if v]
-        freshest = max((a.fetched_at for a in articles), default=None)
+        freshest = db.scalar(select(func.max(NewsArticle.fetched_at)))
+        if freshest and freshest.tzinfo is None:
+            freshest = freshest.replace(tzinfo=timezone.utc)
         return {
             "articles": articles,
             "categories": categories,
             "sources": sources,
             "freshness": freshest.isoformat() if freshest else "unavailable",
-            "live_data": live_data or bool(articles),
+            "live_data": live_data,
             "note": note,
         }
